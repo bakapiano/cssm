@@ -9,13 +9,15 @@ When you're running 8–10 concurrent `claude` sessions across ad-hoc clones (`D
 ## Run
 
 ```powershell
-cd D:\ccsm
-npm install   # only once
+# from a checkout
 node server.js
+
+# zero-install
+npx github:bakapiano/cssm
 ```
 Then open http://localhost:7777.
 
-Default port `7777`, default workDir `D:\ccsm-workspaces`. All settings editable through the Config panel (`data/config.json` on disk). Notable knobs:
+Default port `7777`, default workDir `~/ccsm-workspaces`. Config + snapshots live at `~/.ccsm/` (override with `CCSM_HOME=<path>`). All settings editable through the Config panel (`~/.ccsm/config.json` on disk). Notable knobs:
 
 - `claudeCommand` (default `"claude"`) — what gets `--resume`'d or freshly invoked inside the new terminal. Can be an exe (`claude`, `claude.exe`), a PowerShell alias or function (`ccp`), or any wrapper script — see `commandShell` below.
 - `terminal` — `wt` | `powershell` | `pwsh` | `cmd`. wt opens a fresh window per launch (`wt -w new` is set to defeat the "fold into existing window" setting some users have). The other three each spawn via `cmd /c start ... <shell>`.
@@ -40,11 +42,15 @@ D:\ccsm\
 │   └── config.js            # loadConfig/saveConfig with defaults
 ├── public\
 │   ├── index.html, app.js, styles.css   # vanilla, auto-refresh every 5s
-└── data\
-    ├── config.json          # source of truth (gitignored)
-    ├── snapshot.json        # latest snapshot, rewritten every 60s
-    └── snapshots\           # rotating history (default keep=30)
+└── package.json             # bin entry → `ccsm` (for npx github:bakapiano/cssm)
+
+~/.ccsm/                     # or $CCSM_HOME
+├── config.json              # source of truth
+├── snapshot.json            # latest snapshot, rewritten every 60s
+└── snapshots/               # rotating history (default keep=30)
 ```
+
+On first run, if a legacy `<repo>/data/` directory exists and `~/.ccsm/` is empty, `lib/config.js` copies the old data over (one-time, idempotent). The legacy dir is left in place — clean up manually after verifying.
 
 ## Locked-in design decisions
 

@@ -10,11 +10,21 @@ A small web UI + Node server (Windows-only) that:
 ## Quick start
 
 ```powershell
-cd ccsm
-npm install
-node server.js
+# one-liner — no clone needed
+npx github:bakapiano/cssm
 # open http://localhost:7777
 ```
+
+Or from a checkout:
+
+```powershell
+git clone https://github.com/bakapiano/cssm.git
+cd cssm
+npm install
+node server.js
+```
+
+ccsm stores its config + snapshots under `~/.ccsm/` so it survives across upgrades, npx cache wipes, and multiple checkouts. Override with `CCSM_HOME=<path>` if you want it elsewhere.
 
 ## Layout
 
@@ -29,16 +39,16 @@ ccsm\
 │   ├── focus.js        # PowerShell + Win32 — listWindowsOf, focusByHwnd, focusByPid
 │   └── config.js       # load/save data/config.json
 ├── public\             # vanilla HTML/JS frontend, auto-refresh every 5s
-└── data\
-    ├── config.json     # source of truth, gitignored
-    ├── snapshot.json   # latest auto-snapshot, gitignored
-    └── snapshots\      # rotating history, gitignored
+~/.ccsm/                  # (or $CCSM_HOME)
+├── config.json           # source of truth
+├── snapshot.json         # latest auto-snapshot
+└── snapshots/            # rotating history
 ```
 
 ## Defaults
 
 - Port: `7777`
-- Work dir: `D:\ccsm-workspaces` (configurable; each workspace holds one or more repo clones)
+- Work dir: `~/ccsm-workspaces` (configurable; each workspace holds one or more repo clones)
 - Terminal: `wt` (Windows Terminal). Also: `powershell` | `pwsh` | `cmd`.
 - claude command: `claude` — any string. When terminal is `wt`, the command is wrapped in `pwsh -EncodedCommand …` (configurable as `commandShell`) so PowerShell aliases / functions / profile-defined names like `ccp` resolve correctly.
 - Auto-focus on launch: on (HWND diff across the terminal process — works for modern wt's multi-window-single-process layout).

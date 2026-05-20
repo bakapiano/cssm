@@ -1,9 +1,19 @@
 {
-  "name": "ccsm",
+  "name": "@bakapiano/ccsm",
   "version": "0.1.0",
-  "description": "Claude Code Session Manager",
-  "private": true,
+  "description": "Claude Code Session Manager — Windows web UI to manage many concurrent claude sessions: live list, snapshot/restore, focus existing window, new session in an isolated workspace with repo clones",
+  "license": "MIT",
   "main": "server.js",
+  "bin": {
+    "ccsm": "./server.js"
+  },
+  "files": [
+    "server.js",
+    "lib/",
+    "public/",
+    "README.md",
+    "CLAUDE.md"
+  ],
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js"
@@ -13,5 +23,27 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "os": [
+    "win32"
+  ],
+  "keywords": [
+    "claude",
+    "claude-code",
+    "session-manager",
+    "windows",
+    "windows-terminal"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bakapiano/cssm.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bakapiano/cssm/issues"
+  },
+  "homepage": "https://github.com/bakapiano/cssm#readme",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   }
 }

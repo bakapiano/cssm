@@ -1,10 +1,11 @@
+#!/usr/bin/env node
 'use strict';
 
 const path = require('node:path');
 const express = require('express');
 
 const { listSessions } = require('./lib/sessions');
-const { loadConfig, saveConfig } = require('./lib/config');
+const { loadConfig, saveConfig, DATA_DIR } = require('./lib/config');
 const {
   saveSnapshot,
   loadLatestSnapshot,
@@ -247,24 +248,24 @@ app.post('/api/sessions/new', async (req, res) => {
   }
 });
 
-// ---- launch finder session (a claude session in D:\ccsm pre-pointed at session data) ----
+// ---- launch finder session (a claude session in the ccsm data dir pre-pointed at session data) ----
 app.post('/api/sessions/finder', asyncH(async (_req, res) => {
   const cfg = await loadConfig();
   const beforeHwnds = await snapshotWindowsOf(processNameFor(cfg.terminal) || 'WindowsTerminal.exe');
   const launched = launchNewClaude({
-    cwd: __dirname,
+    cwd: DATA_DIR,
     title: 'ccsm finder',
     extraArgs: cfg.finderPrompt ? [cfg.finderPrompt] : [],
     terminal: cfg.terminal,
     claudeCommand: cfg.claudeCommand,
-      commandShell: cfg.commandShell || "pwsh",
+    commandShell: cfg.commandShell || 'pwsh',
   });
   autoFocusAfterLaunch({
     terminal: cfg.terminal,
     beforeHwnds,
     autoFocus: cfg.autoFocusOnLaunch !== false,
   });
-  res.json({ launched, cwd: __dirname, prompt: cfg.finderPrompt });
+  res.json({ launched, cwd: DATA_DIR, prompt: cfg.finderPrompt });
 }));
 
 // ---- resume single session ----
@@ -327,8 +328,9 @@ async function startSnapshotLoop() {
   const cfg = await loadConfig();
   app.listen(cfg.port, () => {
     console.log(`ccsm listening on http://localhost:${cfg.port}`);
+    console.log(`data dir:        ${DATA_DIR}`);
     console.log(`work dir:        ${cfg.workDir}`);
-    console.log(`config:          ${require('./lib/config').CONFIG_PATH}`);
+    console.log(`terminal:        ${cfg.terminal} · ${cfg.claudeCommand}${cfg.terminal === 'wt' ? ` (via ${cfg.commandShell})` : ''}`);
   });
   startSnapshotLoop();
 })().catch((err) => {
