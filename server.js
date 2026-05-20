@@ -4,7 +4,7 @@
 const path = require('node:path');
 const express = require('express');
 
-const { listSessions } = require('./lib/sessions');
+const { listSessions, listRecentSessions } = require('./lib/sessions');
 const { loadConfig, saveConfig, DATA_DIR } = require('./lib/config');
 const {
   saveSnapshot,
@@ -26,6 +26,7 @@ const {
 } = require('./lib/launcher');
 const {
   focusByPid,
+  focusBySession,
   snapshotWindowsOf,
   focusNewlyOpenedHwnd,
 } = require('./lib/focus');
@@ -59,6 +60,14 @@ function asyncH(fn) {
 app.get('/api/sessions', asyncH(async (_req, res) => {
   const sessions = await listSessions();
   res.json({ sessions, takenAt: Date.now() });
+}));
+
+app.get('/api/sessions/recent', asyncH(async (req, res) => {
+  const limit = Math.min(200, Number(req.query.limit) || 50);
+  const live = await listSessions();
+  const excludeIds = new Set(live.map((s) => s.sessionId));
+  const recent = await listRecentSessions({ limit, excludeIds });
+  res.json({ recent, takenAt: Date.now() });
 }));
 
 // ---- config ----
@@ -296,8 +305,13 @@ app.post('/api/sessions/:sessionId/focus', asyncH(async (req, res) => {
   const sessions = await listSessions();
   const s = sessions.find((x) => x.sessionId === sessionId);
   if (!s) return res.status(404).json({ error: `session ${sessionId} not live` });
-  const result = await focusByPid(s.pid);
-  res.json({ session: { pid: s.pid, sessionId: s.sessionId, cwd: s.cwd }, ...result });
+  const result = await focusBySession({
+    pid: s.pid,
+    sessionId: s.sessionId,
+    title: s.title,
+    cwd: s.cwd,
+  });
+  res.json({ session: { pid: s.pid, sessionId: s.sessionId, cwd: s.cwd, title: s.title }, ...result });
 }));
 
 // ---- terminal kinds ----

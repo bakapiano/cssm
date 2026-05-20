@@ -83,6 +83,29 @@ function renderSessions() {
     state.sessions.length ? `${state.sessions.length} live · last refresh ${new Date().toLocaleTimeString()}` : 'no live sessions';
 }
 
+function renderRecent() {
+  const tb = $('#recentTable tbody');
+  tb.innerHTML = '';
+  const recent = state.recent || [];
+  for (const s of recent) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><div class="ellipsis" title="${escapeHtml(s.title || '')}">${escapeHtml(s.title || '(no title)')}</div>
+          <div class="mono small" title="${escapeHtml(s.sessionId)}">${escapeHtml(s.sessionId.slice(0,8))}…</div></td>
+      <td><div class="ellipsis mono" title="${escapeHtml(s.cwd || '')}">${escapeHtml(s.cwd || '')}</div></td>
+      <td class="mono small">${escapeHtml(s.gitBranch || '')}</td>
+      <td title="${escapeHtml(fmtTime(s.updatedAt))}">${escapeHtml(fmtAgo(s.updatedAt))}</td>
+      <td title="${escapeHtml(fmtTime(s.startedAt))}">${escapeHtml(fmtAgo(s.startedAt))}</td>
+      <td style="text-align:right;">
+        <button class="btn small btn-primary" data-continue="${escapeHtml(s.sessionId)}" data-cwd="${escapeHtml(s.cwd)}" title="open a new wt window with claude --resume">continue</button>
+      </td>
+    `;
+    tb.appendChild(tr);
+  }
+  $('#recentMeta').textContent =
+    recent.length ? `${recent.length} recent · last refresh ${new Date().toLocaleTimeString()}` : 'no recent sessions';
+}
+
 // ---- snapshot render ----
 
 function renderSnapshot() {
@@ -221,6 +244,12 @@ async function loadSessions() {
   renderSessions();
 }
 
+async function loadRecent() {
+  const r = await api('GET', '/api/sessions/recent?limit=50');
+  state.recent = r.recent;
+  renderRecent();
+}
+
 async function loadConfig() {
   const [cfg, terminals] = await Promise.all([
     api('GET', '/api/config'),
@@ -249,7 +278,7 @@ async function loadWorkspaces() {
 }
 
 async function refreshAll() {
-  await Promise.all([loadSessions(), loadSnapshot(), loadWorkspaces()]);
+  await Promise.all([loadSessions(), loadRecent(), loadSnapshot(), loadWorkspaces()]);
 }
 
 // ---- event wiring ----
@@ -291,6 +320,24 @@ function wireUp() {
     try {
       await api('POST', `/api/sessions/${sessionId}/resume`, { cwd });
       toast(`opening wt for ${sessionId.slice(0,8)}…`);
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  $('#recentTable').addEventListener('click', async (ev) => {
+    const btn = ev.target.closest('button[data-continue]');
+    if (!btn) return;
+    const sessionId = btn.dataset.continue;
+    const cwd = btn.dataset.cwd;
+    btn.disabled = true;
+    try {
+      await api('POST', `/api/sessions/${sessionId}/resume`, { cwd });
+      toast(`continuing ${sessionId.slice(0, 8)}…`);
+      setTimeout(() => loadSessions().catch(() => {}), 3000);
+      setTimeout(() => loadRecent().catch(() => {}), 4000);
     } catch (e) {
       toast(e.message, 'error');
     } finally {
@@ -408,6 +455,7 @@ function startAutoRefresh() {
   stopAutoRefresh();
   state.autoTimer = setInterval(() => {
     loadSessions().catch(() => {});
+    loadRecent().catch(() => {});
     loadSnapshot().catch(() => {});
   }, 5000);
 }

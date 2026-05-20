@@ -88,7 +88,8 @@ The alternative ("one repo per workspace") was explicitly rejected — don't ref
 | POST | `/api/sessions/new` | body `{repos, workspace?, launch?}` — picks/creates ws, clones missing repos, launches wt |
 | POST | `/api/sessions/finder` | opens a wt with `claude` in `D:\ccsm` and the `finderPrompt` as opening message |
 | POST | `/api/sessions/:id/resume` | body `{cwd}` — launches `wt -d <cwd> claude --resume <id>` |
-| POST | `/api/sessions/:id/focus` | walks up the claude PID parent chain to find the wt window, raises it via SetForegroundWindow |
+| GET | `/api/sessions/recent` | recently-used sessions discovered from `~/.claude/projects/*/*.jsonl` mtimes, excluding currently-live ids |
+| POST | `/api/sessions/:id/focus` | matches a wt window by title (cleaned of leading status glyphs) against the session's ai-title; falls back to PID-parent walk if no unique match |
 | GET | `/api/terminals` | enumerate built-in terminal kinds + their process names |
 | GET | `/api/health` | sanity ping |
 
@@ -111,6 +112,8 @@ The alternative ("one repo per workspace") was explicitly rejected — don't ref
 ccsm uses variant 1 and always `path.resolve()`s the cwd first — defends against a malformed `D:ccsm` (no separator) being interpreted as "current dir on drive D + ccsm", which would resolve to e.g. `D:\ccsm\ccsm`.
 
 **Don't test wt launching via `node -e "..."` inside `bash -c`.** Backslashes get eaten by shell quoting and the JS string ends up malformed. Write a `.js` file and `node file.js` instead.
+
+**focusBySession — title-based wt window matching.** Walking up the claude.exe PID parent chain and taking `MainWindowHandle` of the wt process *always* returns the same canonical window in modern multi-window single-process wt — clicking different sessions all focused the same window. `focusBySession` instead lists all visible wt windows (`EnumWindows` filtered by process name), strips the leading wt status glyph (`✳ `, `⠐ `, `⠠ ` …) and compares to the session's ai-title. Falls back to title-substring, then cwd-basename, then the old PID-parent walk when no unique match — at least the user sees *some* wt window even if it's the wrong tab. Caveat: for sessions sitting in an inactive tab of a multi-tab wt window, the window title shows the *active* tab's title — so we can't find them by title alone and the fallback is wrong-tab.
 
 **Focus helper (`lib/focus.js`).** One `powershell.exe -EncodedCommand <base64>` invocation per call, dispatched by `CCSM_FOCUS_MODE` env var into modes `list` (enumerate visible top-level windows owned by a process name), `focus-hwnd` (activate a specific HWND), `focus-pid` (walk parent chain to MainWindowHandle then activate). Encoded as UTF-16-LE-base64 — passing the C# block via stdin to `-Command -` silently produces no output, so we don't. Three gotchas baked in:
 1. C# `out _` discard breaks PowerShell 5.1's bundled C# compiler — use a named `uint dummy`.
