@@ -324,14 +324,47 @@ async function startSnapshotLoop() {
   console.log(`[snapshot] auto-saving every ${Math.round(interval / 1000)}s`);
 }
 
+// Try the preferred port, then preferred+1..+9, then let the OS pick a free
+// one. Resolves with the port the server actually bound to.
+function listenWithFallback(preferred) {
+  return new Promise((resolve, reject) => {
+    const attempt = (port, tries) => {
+      const server = app.listen(port);
+      server.once('listening', () => resolve({ server, port: server.address().port }));
+      server.once('error', (err) => {
+        if (err.code !== 'EADDRINUSE') return reject(err);
+        if (tries < 9) attempt(port + 1, tries + 1);
+        else if (tries === 9) attempt(0, tries + 1); // OS-assigned free port
+        else reject(err);
+      });
+    };
+    attempt(preferred, 0);
+  });
+}
+
+function openInBrowser(url) {
+  if (process.platform !== 'win32') return;
+  const { spawn } = require('node:child_process');
+  // cmd's `start` builtin opens URL in the default browser. The empty "" is
+  // the window-title slot for `start`, otherwise `<url>` would be eaten as
+  // the title when it has spaces.
+  const child = spawn('cmd.exe', ['/c', 'start', '', url], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+  });
+  child.unref();
+}
+
 (async () => {
   const cfg = await loadConfig();
-  app.listen(cfg.port, () => {
-    console.log(`ccsm listening on http://localhost:${cfg.port}`);
-    console.log(`data dir:        ${DATA_DIR}`);
-    console.log(`work dir:        ${cfg.workDir}`);
-    console.log(`terminal:        ${cfg.terminal} · ${cfg.claudeCommand}${cfg.terminal === 'wt' ? ` (via ${cfg.commandShell})` : ''}`);
-  });
+  const { port } = await listenWithFallback(cfg.port);
+  const url = `http://localhost:${port}`;
+  console.log(`ccsm listening on ${url}${port !== cfg.port ? `  (requested ${cfg.port}, was taken)` : ''}`);
+  console.log(`data dir:        ${DATA_DIR}`);
+  console.log(`work dir:        ${cfg.workDir}`);
+  console.log(`terminal:        ${cfg.terminal} · ${cfg.claudeCommand}${cfg.terminal === 'wt' ? ` (via ${cfg.commandShell})` : ''}`);
+  if (cfg.autoOpenBrowser !== false) openInBrowser(url);
   startSnapshotLoop();
 })().catch((err) => {
   console.error('startup failed:', err);

@@ -19,6 +19,8 @@ Then open http://localhost:7777.
 
 Default port `7777`, default workDir `~/ccsm-workspaces`. Config + snapshots live at `~/.ccsm/` (override with `CCSM_HOME=<path>`). All settings editable through the Config panel (`~/.ccsm/config.json` on disk). Notable knobs:
 
+- `port` (default `7777`) — preferred listen port. If taken, ccsm tries `+1..+9` then asks the OS for any free port. The startup log prints the actual URL so you always see where it ended up.
+- `autoOpenBrowser` (default true) — after `listen()` succeeds, ccsm spawns `cmd /c start "" <url>` to open the UI in the default browser. Disable for headless / nohup setups.
 - `claudeCommand` (default `"claude"`) — what gets `--resume`'d or freshly invoked inside the new terminal. Can be an exe (`claude`, `claude.exe`), a PowerShell alias or function (`ccp`), or any wrapper script — see `commandShell` below.
 - `terminal` — `wt` | `powershell` | `pwsh` | `cmd`. wt opens a fresh window per launch (`wt -w new` is set to defeat the "fold into existing window" setting some users have). The other three each spawn via `cmd /c start ... <shell>`.
 - `commandShell` (default `pwsh`) — only consulted when `terminal=wt`. Values `pwsh` / `powershell` wrap `claudeCommand` inside `<shell> -NoExit -NoLogo -Command "Set-Location ...; & '<cmd>' '<args>'..."` so PowerShell aliases / functions / profile-defined names (like `ccp` from `$PROFILE`) resolve. `none` runs the command directly via wt (raw `CreateProcess`) — fine if `claudeCommand` is an actual exe on PATH, broken for aliases. `pwsh` / `powershell` kinds already wrap natively so this knob doesn't affect them; `cmd` kind has no shell concept for aliases.
