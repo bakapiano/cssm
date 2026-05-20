@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ccsm — Claude Code Session Manager</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo">⌘</span>
+        <span>ccsm</span>
+        <small id="serverInfo"></small>
+      </div>
+      <div class="topbar-actions">
+        <label class="toggle">
+          <input type="checkbox" id="autoRefresh" checked />
+          <span>auto-refresh</span>
+        </label>
+        <button id="refreshBtn" class="btn">refresh</button>
+        <button id="finderBtn" class="btn btn-accent" title="Open a new Claude Code session pointed at the session-manager data folder">
+          ask claude to find a session
+        </button>
+      </div>
+    </header>
+
+    <main>
+      <section class="panel">
+        <header class="panel-header">
+          <h2>live sessions</h2>
+          <span id="sessionsMeta" class="muted"></span>
+        </header>
+        <div class="table-wrap">
+          <table id="sessionsTable" class="data-table">
+            <thead>
+              <tr>
+                <th></th>
+                <th>title</th>
+                <th>cwd</th>
+                <th>updated</th>
+                <th>started</th>
+                <th>pid</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <header class="panel-header">
+          <h2>snapshot</h2>
+          <span id="snapshotMeta" class="muted"></span>
+        </header>
+        <div class="panel-body row gap">
+          <button id="snapshotSaveBtn" class="btn">save snapshot now</button>
+          <button id="snapshotRestoreBtn" class="btn btn-primary">restore latest snapshot</button>
+          <select id="historySelect" class="select" title="restore a historical snapshot">
+            <option value="">history…</option>
+          </select>
+          <button id="historyRestoreBtn" class="btn">restore selected</button>
+        </div>
+        <details class="panel-body">
+          <summary>show snapshot contents</summary>
+          <pre id="snapshotPreview" class="preview"></pre>
+        </details>
+      </section>
+
+      <section class="panel">
+        <header class="panel-header">
+          <h2>new session</h2>
+          <span class="muted">picks an unused workspace under workDir, clones missing repos, opens a fresh wt window with <code>claude</code></span>
+        </header>
+        <div class="panel-body">
+          <div class="row gap" id="repoPicker"></div>
+          <div class="row gap" style="margin-top: 8px;">
+            <label for="workspaceSelect">workspace:</label>
+            <select id="workspaceSelect" class="select">
+              <option value="">(auto — find or create unused)</option>
+            </select>
+            <button id="newSessionBtn" class="btn btn-primary">launch new session</button>
+          </div>
+          <div id="newSessionProgress" class="progress-list"></div>
+          <div id="newSessionResult" class="muted small"></div>
+        </div>
+        <details class="panel-body">
+          <summary>workspaces under workDir</summary>
+          <div id="workspaceList" class="workspace-list"></div>
+        </details>
+      </section>
+
+      <section class="panel">
+        <header class="panel-header"><h2>config</h2></header>
+        <div class="panel-body grid-2">
+          <label>port (restart server to apply)
+            <input id="cfgPort" type="number" />
+          </label>
+          <label>work dir
+            <input id="cfgWorkDir" type="text" />
+          </label>
+          <label>snapshot interval (ms)
+            <input id="cfgInterval" type="number" min="5000" />
+          </label>
+          <label>history kept
+            <input id="cfgKeep" type="number" min="1" />
+          </label>
+          <label>claude command
+            <input id="cfgClaudeCommand" type="text" placeholder="claude" />
+          </label>
+          <label>terminal
+            <select id="cfgTerminal" class="select"></select>
+          </label>
+          <label>command shell (for wt; lets PowerShell aliases / functions resolve)
+            <select id="cfgCommandShell" class="select">
+              <option value="pwsh">pwsh (PowerShell 7)</option>
+              <option value="powershell">powershell (Windows PowerShell 5.1)</option>
+              <option value="none">none — run command directly via wt</option>
+            </select>
+          </label>
+          <label class="full" style="flex-direction: row; align-items: center; gap: 8px;">
+            <input id="cfgAutoFocus" type="checkbox" />
+            <span style="color: var(--text);">auto-focus newly launched window</span>
+          </label>
+          <label class="full">finder prompt
+            <textarea id="cfgFinderPrompt" rows="3"></textarea>
+          </label>
+          <div class="full">
+            <div class="row" style="justify-content: space-between; align-items: center;">
+              <strong>repos</strong>
+              <button id="addRepoBtn" class="btn small">+ add repo</button>
+            </div>
+            <table id="reposTable" class="data-table">
+              <thead>
+                <tr>
+                  <th>name</th><th>url</th><th>default selected</th><th></th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel-body">
+          <button id="saveConfigBtn" class="btn btn-primary">save config</button>
+          <span id="configSavedAt" class="muted small"></span>
+        </div>
+      </section>
+    </main>
+
+    <div id="toast" class="toast"></div>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>

@@ -1,0 +1,337 @@
+'use strict';
+
+const path = require('node:path');
+const express = require('express');
+
+const { listSessions } = require('./lib/sessions');
+const { loadConfig, saveConfig } = require('./lib/config');
+const {
+  saveSnapshot,
+  loadLatestSnapshot,
+  listSnapshotHistory,
+  loadSnapshotByFile,
+  restoreSnapshot,
+} = require('./lib/snapshot');
+const {
+  listWorkspaces,
+  findOrCreateWorkspace,
+  ensureReposInWorkspace,
+} = require('./lib/workspace');
+const {
+  launchNewClaude,
+  launchResume,
+  listTerminalKinds,
+  processNameFor,
+} = require('./lib/launcher');
+const {
+  focusByPid,
+  snapshotWindowsOf,
+  focusNewlyOpenedHwnd,
+} = require('./lib/focus');
+
+async function autoFocusAfterLaunch({ terminal, beforeHwnds, autoFocus }) {
+  if (!autoFocus) return;
+  try {
+    const processName = processNameFor(terminal);
+    if (!processName) return;
+    await focusNewlyOpenedHwnd(beforeHwnds, processName);
+  } catch (e) {
+    console.error('[auto-focus]', e.message);
+  }
+}
+
+const app = express();
+app.use(express.json({ limit: '1mb' }));
+app.use(express.static(path.join(__dirname, 'public')));
+
+function asyncH(fn) {
+  return (req, res) => {
+    Promise.resolve(fn(req, res)).catch((err) => {
+      console.error('[api error]', err);
+      res.status(500).json({ error: String(err && err.message || err) });
+    });
+  };
+}
+
+// ---- sessions ----
+
+app.get('/api/sessions', asyncH(async (_req, res) => {
+  const sessions = await listSessions();
+  res.json({ sessions, takenAt: Date.now() });
+}));
+
+// ---- config ----
+
+app.get('/api/config', asyncH(async (_req, res) => {
+  res.json(await loadConfig());
+}));
+
+app.put('/api/config', asyncH(async (req, res) => {
+  const cfg = await saveConfig(req.body || {});
+  res.json(cfg);
+}));
+
+// ---- snapshot ----
+
+app.get('/api/snapshot', asyncH(async (_req, res) => {
+  const snap = await loadLatestSnapshot();
+  res.json({ snapshot: snap });
+}));
+
+app.post('/api/snapshot', asyncH(async (_req, res) => {
+  const cfg = await loadConfig();
+  const snap = await saveSnapshot({ keep: cfg.snapshotHistoryKeep });
+  res.json({ snapshot: snap });
+}));
+
+app.get('/api/snapshot/history', asyncH(async (_req, res) => {
+  res.json({ history: await listSnapshotHistory() });
+}));
+
+app.post('/api/snapshot/restore', asyncH(async (req, res) => {
+  let snap;
+  if (req.body && req.body.file) {
+    snap = await loadSnapshotByFile(req.body.file);
+  } else {
+    snap = await loadLatestSnapshot();
+  }
+  if (!snap) return res.status(404).json({ error: 'no snapshot to restore' });
+  const cfg = await loadConfig();
+  const beforeHwnds = await snapshotWindowsOf(
+    processNameFor(cfg.terminal) || 'WindowsTerminal.exe'
+  );
+  const result = restoreSnapshot(snap, {
+    terminal: cfg.terminal,
+    claudeCommand: cfg.claudeCommand,
+      commandShell: cfg.commandShell || "pwsh",
+  });
+  // For N restored windows we just focus the last one to surface restore-happened
+  // without strobing focus through all N.
+  autoFocusAfterLaunch({
+    terminal: cfg.terminal,
+    beforeHwnds,
+    autoFocus: cfg.autoFocusOnLaunch !== false,
+  });
+  res.json({ restored: result, takenAt: snap.takenAt, count: snap.sessions.length });
+}));
+
+// ---- workspaces ----
+
+app.get('/api/workspaces', asyncH(async (_req, res) => {
+  const cfg = await loadConfig();
+  const workspaces = await listWorkspaces({
+    workDir: cfg.workDir,
+    repos: cfg.repos,
+  });
+  res.json({ workDir: cfg.workDir, repos: cfg.repos, workspaces });
+}));
+
+// ---- new session ----
+// body: { repos: ["repo-a","repo-b"], workspace?: "ws-2" (override), launch?: true }
+// Streams NDJSON: one JSON object per line. Event types:
+//   {type:"workspace", workspace, created}
+//   {type:"clone-start", repo}
+//   {type:"clone-progress", repo, phase, percent, current, total, detail}
+//   {type:"clone-line", repo, line}            (raw git line, when no progress)
+//   {type:"clone-done", repo, action, path}
+//   {type:"clone-error", repo, error}
+//   {type:"launched", launched}
+//   {type:"done", success, error?}
+app.post('/api/sessions/new', async (req, res) => {
+  res.setHeader('Content-Type', 'application/x-ndjson');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('X-Accel-Buffering', 'no');
+  // Disable response compression buffering — flush right away.
+  if (typeof res.flushHeaders === 'function') res.flushHeaders();
+
+  const emit = (obj) => {
+    res.write(JSON.stringify(obj) + '\n');
+  };
+  const fail = (msg, extra) => {
+    emit({ type: 'done', success: false, error: msg, ...extra });
+    res.end();
+  };
+
+  try {
+    const cfg = await loadConfig();
+    const wantedNames = Array.isArray(req.body && req.body.repos)
+      ? req.body.repos
+      : cfg.repos.filter((r) => r.defaultSelected).map((r) => r.name);
+
+    const wantedRepos = cfg.repos.filter((r) => wantedNames.includes(r.name));
+    if (wantedRepos.length === 0) {
+      return fail('No repos selected and no defaults available');
+    }
+
+    let workspace;
+    let created = false;
+    if (req.body && req.body.workspace) {
+      const all = await listWorkspaces({ workDir: cfg.workDir, repos: cfg.repos });
+      workspace = all.find((w) => w.name === req.body.workspace);
+      if (!workspace) return fail(`workspace ${req.body.workspace} not found`);
+      if (workspace.inUse) {
+        return fail(
+          `workspace ${workspace.name} is in use by ${workspace.sessionsHere.length} session(s)`
+        );
+      }
+    } else {
+      const r = await findOrCreateWorkspace({
+        workDir: cfg.workDir,
+        repos: cfg.repos,
+        requireUnused: true,
+      });
+      workspace = r.workspace;
+      created = r.created;
+    }
+    emit({ type: 'workspace', workspace, created });
+
+    const cloneResults = await ensureReposInWorkspace({
+      workspacePath: workspace.path,
+      repos: wantedRepos,
+      onRepoStart: (repo) =>
+        emit({ type: 'clone-start', repo: repo.name, url: repo.url }),
+      onProgress: (repo, p) =>
+        emit({
+          type: 'clone-progress',
+          repo: repo.name,
+          phase: p.phase,
+          percent: p.percent,
+          current: p.current,
+          total: p.total,
+          detail: p.detail,
+        }),
+      onLine: (repo, line) =>
+        emit({ type: 'clone-line', repo: repo.name, line }),
+      onRepoEnd: (repo, result) =>
+        emit({ type: 'clone-end', repo: repo.name, ...result }),
+    });
+
+    const failed = cloneResults.filter((r) => !r.ok);
+    if (failed.length > 0) {
+      return fail('Some repos failed to clone', { cloneResults });
+    }
+
+    const shouldLaunch = req.body && req.body.launch !== false;
+    let launched = null;
+    if (shouldLaunch) {
+      const beforeHwnds = await snapshotWindowsOf(
+        processNameFor(cfg.terminal) || 'WindowsTerminal.exe'
+      );
+      launched = launchNewClaude({
+        cwd: workspace.path,
+        title: workspace.name,
+        terminal: cfg.terminal,
+        claudeCommand: cfg.claudeCommand,
+      commandShell: cfg.commandShell || "pwsh",
+      });
+      emit({ type: 'launched', launched });
+      autoFocusAfterLaunch({
+        terminal: cfg.terminal,
+        beforeHwnds,
+        autoFocus: cfg.autoFocusOnLaunch !== false,
+      });
+    }
+
+    emit({
+      type: 'done',
+      success: true,
+      workspace,
+      created,
+      cloneResults,
+      launched,
+    });
+    res.end();
+  } catch (e) {
+    console.error('[/api/sessions/new]', e);
+    fail(String(e && e.message || e));
+  }
+});
+
+// ---- launch finder session (a claude session in D:\ccsm pre-pointed at session data) ----
+app.post('/api/sessions/finder', asyncH(async (_req, res) => {
+  const cfg = await loadConfig();
+  const beforeHwnds = await snapshotWindowsOf(processNameFor(cfg.terminal) || 'WindowsTerminal.exe');
+  const launched = launchNewClaude({
+    cwd: __dirname,
+    title: 'ccsm finder',
+    extraArgs: cfg.finderPrompt ? [cfg.finderPrompt] : [],
+    terminal: cfg.terminal,
+    claudeCommand: cfg.claudeCommand,
+      commandShell: cfg.commandShell || "pwsh",
+  });
+  autoFocusAfterLaunch({
+    terminal: cfg.terminal,
+    beforeHwnds,
+    autoFocus: cfg.autoFocusOnLaunch !== false,
+  });
+  res.json({ launched, cwd: __dirname, prompt: cfg.finderPrompt });
+}));
+
+// ---- resume single session ----
+app.post('/api/sessions/:sessionId/resume', asyncH(async (req, res) => {
+  const sessionId = req.params.sessionId;
+  const cwd = req.body && req.body.cwd;
+  if (!cwd) return res.status(400).json({ error: 'cwd required in body' });
+  const cfg = await loadConfig();
+  const beforeHwnds = await snapshotWindowsOf(processNameFor(cfg.terminal) || 'WindowsTerminal.exe');
+  const launched = launchResume({
+    cwd,
+    sessionId,
+    terminal: cfg.terminal,
+    claudeCommand: cfg.claudeCommand,
+      commandShell: cfg.commandShell || "pwsh",
+  });
+  autoFocusAfterLaunch({
+    terminal: cfg.terminal,
+    beforeHwnds,
+    autoFocus: cfg.autoFocusOnLaunch !== false,
+  });
+  res.json({ launched });
+}));
+
+// ---- focus the wt window that's already hosting this session ----
+app.post('/api/sessions/:sessionId/focus', asyncH(async (req, res) => {
+  const sessionId = req.params.sessionId;
+  const sessions = await listSessions();
+  const s = sessions.find((x) => x.sessionId === sessionId);
+  if (!s) return res.status(404).json({ error: `session ${sessionId} not live` });
+  const result = await focusByPid(s.pid);
+  res.json({ session: { pid: s.pid, sessionId: s.sessionId, cwd: s.cwd }, ...result });
+}));
+
+// ---- terminal kinds ----
+app.get('/api/terminals', (_req, res) => res.json({ terminals: listTerminalKinds() }));
+
+// ---- health ----
+app.get('/api/health', (_req, res) => res.json({ ok: true, pid: process.pid }));
+
+// ---- auto-snapshot scheduler ----
+let snapshotTimer = null;
+async function startSnapshotLoop() {
+  const cfg = await loadConfig();
+  const interval = Math.max(5_000, cfg.snapshotIntervalMs || 60_000);
+  const tick = async () => {
+    try {
+      const cfg = await loadConfig();
+      await saveSnapshot({ keep: cfg.snapshotHistoryKeep });
+    } catch (e) {
+      console.error('[snapshot]', e.message);
+    }
+  };
+  snapshotTimer = setInterval(tick, interval);
+  tick().catch(() => {});
+  console.log(`[snapshot] auto-saving every ${Math.round(interval / 1000)}s`);
+}
+
+(async () => {
+  const cfg = await loadConfig();
+  app.listen(cfg.port, () => {
+    console.log(`ccsm listening on http://localhost:${cfg.port}`);
+    console.log(`work dir:        ${cfg.workDir}`);
+    console.log(`config:          ${require('./lib/config').CONFIG_PATH}`);
+  });
+  startSnapshotLoop();
+})().catch((err) => {
+  console.error('startup failed:', err);
+  process.exit(1);
+});
