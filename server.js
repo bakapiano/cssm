@@ -4,7 +4,8 @@
 const path = require('node:path');
 const express = require('express');
 
-const { listSessions, listRecentSessions } = require('./lib/sessions');
+const { listSessions, listRecentSessions, findSessionMetadata } = require('./lib/sessions');
+const { listFavorites, addFavorite, removeFavorite, loadFavorites } = require('./lib/favorites');
 const { loadConfig, saveConfig, DATA_DIR } = require('./lib/config');
 const {
   saveSnapshot,
@@ -63,11 +64,45 @@ app.get('/api/sessions', asyncH(async (_req, res) => {
 }));
 
 app.get('/api/sessions/recent', asyncH(async (req, res) => {
-  const limit = Math.min(200, Number(req.query.limit) || 50);
+  const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 15));
+  const offset = Math.max(0, Number(req.query.offset) || 0);
   const live = await listSessions();
   const excludeIds = new Set(live.map((s) => s.sessionId));
-  const recent = await listRecentSessions({ limit, excludeIds });
-  res.json({ recent, takenAt: Date.now() });
+  const { recent, total } = await listRecentSessions({ limit, offset, excludeIds });
+  res.json({ recent, total, limit, offset, takenAt: Date.now() });
+}));
+
+// ---- favorites ----
+// Sessions the user has starred. Stored at $DATA_DIR/favorites.json.
+// Frontend usually GETs once at boot and updates optimistically.
+app.get('/api/favorites', asyncH(async (_req, res) => {
+  const favorites = await listFavorites();
+  res.json({ favorites });
+}));
+
+app.post('/api/favorites/:sessionId', asyncH(async (req, res) => {
+  const sessionId = req.params.sessionId;
+  let info = req.body && typeof req.body === 'object' ? req.body : {};
+  // If client didn't supply title/cwd, try to look them up from the live
+  // session list or from the jsonl files on disk. This way star-from-empty
+  // (e.g. via API) still produces a usable favorite.
+  if (!info.cwd || !info.title) {
+    const live = await listSessions();
+    const livehit = live.find((s) => s.sessionId === sessionId);
+    if (livehit) {
+      info = { cwd: livehit.cwd, title: livehit.title, ...info };
+    } else {
+      const meta = await findSessionMetadata(sessionId);
+      if (meta) info = { cwd: meta.cwd, title: meta.title, gitBranch: meta.gitBranch, ...info };
+    }
+  }
+  const fav = await addFavorite(sessionId, info);
+  res.json({ favorite: fav });
+}));
+
+app.delete('/api/favorites/:sessionId', asyncH(async (req, res) => {
+  const removed = await removeFavorite(req.params.sessionId);
+  res.json({ removed });
 }));
 
 // ---- config ----
@@ -373,7 +408,7 @@ function findAppModeBrowser() {
 }
 
 function openInBrowser(url, mode) {
-  if (process.platform !== 'win32' || mode === 'none') return;
+  if (mode === 'none' || process.platform !== 'win32') return { kind: 'none', child: null };
   const { spawn } = require('node:child_process');
   const fs = require('node:fs');
 
@@ -390,25 +425,28 @@ function openInBrowser(url, mode) {
         [
           `--app=${url}`,
           `--user-data-dir=${profileDir}`,
-          '--window-size=1400,1000',
+          '--window-size=1500,1100',
           '--no-first-run',
           '--no-default-browser-check',
         ],
         { detached: true, stdio: 'ignore' }
       );
       child.unref();
-      return;
+      return { kind: 'app', child };
     }
     console.log('[ccsm] no Edge/Chrome found for app mode, falling back to default browser');
   }
 
-  // mode === 'tab' (or app-mode fallback)
+  // mode === 'tab' (or app-mode fallback). cmd's `start` builtin exits
+  // immediately after launching the default browser — the child handle
+  // isn't usable for lifecycle tracking.
   const child = spawn('cmd.exe', ['/c', 'start', '', url], {
     detached: true,
     stdio: 'ignore',
     windowsHide: true,
   });
   child.unref();
+  return { kind: 'tab', child: null };
 }
 
 (async () => {
@@ -420,7 +458,19 @@ function openInBrowser(url, mode) {
   console.log(`work dir:        ${cfg.workDir}`);
   console.log(`terminal:        ${cfg.terminal} · ${cfg.claudeCommand}${cfg.terminal === 'wt' ? ` (via ${cfg.commandShell})` : ''}`);
   const mode = cfg.browserMode || (cfg.autoOpenBrowser === false ? 'none' : 'app');
-  openInBrowser(url, mode);
+  const opened = openInBrowser(url, mode);
+
+  // Interactive npx-style launch: tie server lifetime to the chromeless
+  // browser window. When the user closes the window, msedge.exe (with its
+  // own --user-data-dir process group) exits — we hear that and shut down
+  // so the terminal returns. Headless / nohup launches stay running.
+  if (opened.kind === 'app' && opened.child && process.stdout.isTTY) {
+    opened.child.on('exit', () => {
+      console.log('[ccsm] browser window closed · shutting down');
+      process.exit(0);
+    });
+    console.log('[ccsm] tied to browser window — close it to stop ccsm');
+  }
   startSnapshotLoop();
 })().catch((err) => {
   console.error('startup failed:', err);

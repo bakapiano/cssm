@@ -34,6 +34,7 @@ D:\ccsm\
 ├── lib\
 │   ├── sessions.js          # reads ~/.claude/sessions/*.json + cross-checks live PIDs (tasklist)
 │   │                        # + pulls last ai-title from ~/.claude/projects/<cwd-slug>/<sessionId>.jsonl
+│   │                        # + listRecentSessions(limit, offset) returns paged {recent, total}
 │   ├── snapshot.js          # save/load/rotate/restore — restore = launch one wt window per session
 │   ├── workspace.js         # workspace = subfolder under workDir holding repo clones;
 │   │                        # "in use" = any live session's cwd is at/under the workspace path
@@ -41,6 +42,7 @@ D:\ccsm\
 │   │                        # path.resolve()s cwd; throws if cwd doesn't exist
 │   ├── focus.js             # PowerShell + Win32 — listWindowsOf, focusByHwnd, focusByPid,
 │   │                        # focusNewlyOpenedHwnd (HWND-diff for auto-focus on launch)
+│   ├── favorites.js         # user-pinned sessions, ~/.ccsm/favorites.json keyed by sessionId
 │   └── config.js            # loadConfig/saveConfig with defaults
 ├── public\
 │   ├── index.html, app.js, styles.css   # vanilla, auto-refresh every 5s
@@ -49,7 +51,9 @@ D:\ccsm\
 ~/.ccsm/                     # or $CCSM_HOME
 ├── config.json              # source of truth
 ├── snapshot.json            # latest snapshot, rewritten every 60s
-└── snapshots/               # rotating history (default keep=30)
+├── snapshots/               # rotating history (default keep=30)
+├── favorites.json           # { [sessionId]: { sessionId, cwd, title, gitBranch, addedAt } }
+└── browser-profile/         # Edge/Chrome --user-data-dir when browserMode=app
 ```
 
 On first run, if a legacy `<repo>/data/` directory exists and `~/.ccsm/` is empty, `lib/config.js` copies the old data over (one-time, idempotent). The legacy dir is left in place — clean up manually after verifying.
@@ -88,8 +92,11 @@ The alternative ("one repo per workspace") was explicitly rejected — don't ref
 | POST | `/api/sessions/new` | body `{repos, workspace?, launch?}` — picks/creates ws, clones missing repos, launches wt |
 | POST | `/api/sessions/finder` | opens a wt with `claude` in `D:\ccsm` and the `finderPrompt` as opening message |
 | POST | `/api/sessions/:id/resume` | body `{cwd}` — launches `wt -d <cwd> claude --resume <id>` |
-| GET | `/api/sessions/recent` | recently-used sessions discovered from `~/.claude/projects/*/*.jsonl` mtimes, excluding currently-live ids |
+| GET | `/api/sessions/recent` | recently-used sessions from `~/.claude/projects/*/*.jsonl` mtimes, excluding live ids · query `?limit=15&offset=0` for pagination · returns `{recent, total, limit, offset}` |
 | POST | `/api/sessions/:id/focus` | matches a wt window by title (cleaned of leading status glyphs) against the session's ai-title; falls back to PID-parent walk if no unique match |
+| GET | `/api/favorites` | array of pinned sessions sorted by `addedAt` desc |
+| POST | `/api/favorites/:id` | star a session; body `{cwd, title, gitBranch?, label?}` (snapshot of current row data so the favorite stays meaningful after the jsonl is gone) |
+| DELETE | `/api/favorites/:id` | unstar |
 | GET | `/api/terminals` | enumerate built-in terminal kinds + their process names |
 | GET | `/api/health` | sanity ping |
 
@@ -130,10 +137,58 @@ ccsm uses variant 1 and always `path.resolve()`s the cwd first — defends again
 
 **`projectSlugForCwd`.** The path-to-slug mapping is `cwd.replace(/[:\\]/g, '-')`, e.g. `D:\ccsm` → `D--ccsm`, `C:\Users\foo` → `C--Users-foo`, `D:\` → `D--`.
 
+## Frontend design language
+
+The UI deliberately copies **claude.ai's** calm light aesthetic — warm cream surfaces, generous spacing, soft borders, single Claude-orange accent. Don't dark-mode-ify or chrome-ify.
+
+**Palette** (CSS vars in `public/styles.css`):
+- `--bg`            `#faf9f5`  warm cream page background
+- `--bg-elev`       `#ffffff`  card surfaces
+- `--sidebar-bg`    `#f3f0e8`  slightly darker cream for the rail
+- `--border`        `#e8e3d5`  hairlines
+- `--ink`           `#1a1815`  body text (warm near-black)
+- `--ink-mid`       `#534e44`  secondary
+- `--ink-muted`     `#8a8475`  meta
+- `--accent`        `#c45f3f`  Claude warm orange — for primary actions, focus rings, active states ONLY
+- Status: green `#4a8a4a` idle · yellow `#c4892b` busy (pulsing) · red `#b73f3f` danger
+
+**Type**:
+- Body / headings: **Geist** (Google Fonts, 300–700). No Fraunces / no italic display.
+- Mono: **JetBrains Mono** for paths, PIDs, sessionIds, branch tags, timestamps in meta.
+- Always `font-variant-numeric: tabular-nums` on numeric cells.
+
+**Layout**:
+- **Sidebar** (collapsible, ~232px ↔ ~60px, state in `localStorage["ccsm.sidebar-collapsed"]`):
+  - top: brand mark (orange rounded square) + `ccsm.` wordmark
+  - mid: 3 nav items (Sessions / Launch / Configure) with stroke icons + label + optional badge
+  - divider + utility items (Refresh, Ask Claude)
+  - footer: collapse toggle (chevron flips on collapse via CSS rotate)
+- **Main column**: page header (title + subtitle + meta row of port/terminal/clock) → content cards → footer status line
+- Cards: `.card` (white, 10px radius, very soft `--shadow`), `.card-head` with title+meta, `.card-body` with optional `.card-body-flush` for tables.
+- Tables: wrapped in `.table-scroll` (`overflow-x: auto`, min-width 760px) so narrow viewports scroll horizontally instead of cramping.
+
+**Animation**:
+- **Don't re-animate on refresh.** Rows have a one-shot staggered fade-in animation. `app.js` `markRendered(tableId)` adds `.no-anim` to the tbody after the first render via double `requestAnimationFrame`, so subsequent 5-second auto-refreshes don't restage every row (would strobe).
+- Panel switch: 0.35s `panel-in` fade-up.
+- Tab indicator: orange left bar on active sidebar item (`::before`).
+- Busy status mark: green-pulse via `box-shadow` keyframes.
+
+**Star (favorites) UI**:
+- Star button sits **inside the title cell**, right next to the title text (not in its own column). Outline-style by default at 55% opacity; row-hover bumps to 100%; favorited state fills with the accent color.
+- Click is delegated at the table level (`button[data-star]`). Toggle is **optimistic**: `state.favorites` updates and re-renders all 3 tables before the network call returns; failure shows a toast.
+- Backend snapshots `cwd / title / gitBranch` into `favorites.json` so the favorite is still meaningful after the source jsonl is gone.
+
+**No emoji in the UI** unless the user typed it (e.g. wt status glyphs in session titles). Use inline SVG icons everywhere (line stroke, 1.5–2px) so they take `currentColor` and live with the type weight.
+
+## Lifecycle: server tied to browser window
+
+When the user launches via `npx @bakapiano/ccsm` from an interactive terminal (`process.stdout.isTTY === true`) AND `browserMode === 'app'`, the server keeps the spawned Edge/Chrome child handle and listens for its `exit` event. When the user closes the chromeless window, msedge.exe (running with its own `--user-data-dir=<DATA_DIR>/browser-profile` process group) exits, our hook fires `process.exit(0)`, and the terminal returns to a prompt. Headless / `nohup` launches don't get this hook (no TTY) and stay running.
+
 ## Extending
 
 When adding features, the natural extension points:
 - New REST routes: `server.js` (keep them under `/api/*`, use `asyncH` wrapper).
-- Frontend section: add a `<section class="panel">` in `public/index.html` and a render function in `public/app.js`.
+- Frontend section: add a `<section class="card">` in `public/index.html` and a render function in `public/app.js`. Use `markRendered(tableId)` after the first render to suppress refresh strobing.
+- Persistent user data: drop a JSON file under `~/.ccsm/` (like `favorites.json`) and wrap with a small lib module — config.js / favorites.js pattern.
 - Workspace lifecycle (delete, rename): `lib/workspace.js`.
 - Different launch modes (e.g., stacked tabs): `lib/launcher.js` — but check first whether the "one window per session" decision still holds.
