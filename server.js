@@ -342,12 +342,53 @@ function listenWithFallback(preferred) {
   });
 }
 
-function openInBrowser(url) {
-  if (process.platform !== 'win32') return;
+function findAppModeBrowser() {
+  const candidates = [
+    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    process.env.LOCALAPPDATA &&
+      path.join(process.env.LOCALAPPDATA, 'Google\\Chrome\\Application\\chrome.exe'),
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+  ].filter(Boolean);
+  const fs = require('node:fs');
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+function openInBrowser(url, mode) {
+  if (process.platform !== 'win32' || mode === 'none') return;
   const { spawn } = require('node:child_process');
-  // cmd's `start` builtin opens URL in the default browser. The empty "" is
-  // the window-title slot for `start`, otherwise `<url>` would be eaten as
-  // the title when it has spaces.
+  const fs = require('node:fs');
+
+  if (mode === 'app') {
+    const exe = findAppModeBrowser();
+    if (exe) {
+      // Per-ccsm profile dir so we don't get the "already running, --app
+      // ignored" merge behavior of Edge/Chrome when the user has a normal
+      // window open. Lives under DATA_DIR so it's tidied with the rest.
+      const profileDir = path.join(DATA_DIR, 'browser-profile');
+      fs.mkdirSync(profileDir, { recursive: true });
+      const child = spawn(
+        exe,
+        [
+          `--app=${url}`,
+          `--user-data-dir=${profileDir}`,
+          '--window-size=1400,1000',
+          '--no-first-run',
+          '--no-default-browser-check',
+        ],
+        { detached: true, stdio: 'ignore' }
+      );
+      child.unref();
+      return;
+    }
+    console.log('[ccsm] no Edge/Chrome found for app mode, falling back to default browser');
+  }
+
+  // mode === 'tab' (or app-mode fallback)
   const child = spawn('cmd.exe', ['/c', 'start', '', url], {
     detached: true,
     stdio: 'ignore',
@@ -364,7 +405,8 @@ function openInBrowser(url) {
   console.log(`data dir:        ${DATA_DIR}`);
   console.log(`work dir:        ${cfg.workDir}`);
   console.log(`terminal:        ${cfg.terminal} · ${cfg.claudeCommand}${cfg.terminal === 'wt' ? ` (via ${cfg.commandShell})` : ''}`);
-  if (cfg.autoOpenBrowser !== false) openInBrowser(url);
+  const mode = cfg.browserMode || (cfg.autoOpenBrowser === false ? 'none' : 'app');
+  openInBrowser(url, mode);
   startSnapshotLoop();
 })().catch((err) => {
   console.error('startup failed:', err);

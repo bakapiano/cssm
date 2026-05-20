@@ -165,7 +165,9 @@ function renderConfig() {
   $('#cfgClaudeCommand').value = state.config.claudeCommand || 'claude';
   $('#cfgCommandShell').value = state.config.commandShell || 'pwsh';
   $('#cfgAutoFocus').checked = state.config.autoFocusOnLaunch !== false;
-  $('#cfgAutoOpenBrowser').checked = state.config.autoOpenBrowser !== false;
+  $('#cfgBrowserMode').value =
+    state.config.browserMode ||
+    (state.config.autoOpenBrowser === false ? 'none' : 'app');
   const termSel = $('#cfgTerminal');
   termSel.innerHTML = (state.terminals || []).map((t) =>
     `<option value="${escapeHtml(t.name)}" ${t.name === state.config.terminal ? 'selected' : ''}>${escapeHtml(t.name)} (${escapeHtml(t.processName)})</option>`
@@ -205,7 +207,7 @@ function readConfigFromForm() {
     terminal: $('#cfgTerminal').value || 'wt',
     commandShell: $('#cfgCommandShell').value || 'pwsh',
     autoFocusOnLaunch: $('#cfgAutoFocus').checked,
-    autoOpenBrowser: $('#cfgAutoOpenBrowser').checked,
+    browserMode: $('#cfgBrowserMode').value || 'app',
     finderPrompt: $('#cfgFinderPrompt').value,
     repos,
   };
