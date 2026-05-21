@@ -6,6 +6,7 @@ const express = require('express');
 
 const { listSessions, listRecentSessions, findSessionMetadata } = require('./lib/sessions');
 const { listFavorites, addFavorite, removeFavorite, loadFavorites } = require('./lib/favorites');
+const { loadLabels, setLabel, removeLabel } = require('./lib/labels');
 const { loadConfig, saveConfig, DATA_DIR } = require('./lib/config');
 const {
   saveSnapshot,
@@ -102,6 +103,29 @@ app.post('/api/favorites/:sessionId', asyncH(async (req, res) => {
 
 app.delete('/api/favorites/:sessionId', asyncH(async (req, res) => {
   const removed = await removeFavorite(req.params.sessionId);
+  res.json({ removed });
+}));
+
+// ---- labels (rename overrides) ----
+// Custom display titles keyed by sessionId. Empty body / empty label is
+// treated as a delete.
+app.get('/api/labels', asyncH(async (_req, res) => {
+  const labels = await loadLabels();
+  res.json({ labels });
+}));
+
+app.put('/api/labels/:sessionId', asyncH(async (req, res) => {
+  const label = req.body && req.body.label;
+  if (!label || !String(label).trim()) {
+    const removed = await removeLabel(req.params.sessionId);
+    return res.json({ removed });
+  }
+  const saved = await setLabel(req.params.sessionId, label);
+  res.json({ label: saved });
+}));
+
+app.delete('/api/labels/:sessionId', asyncH(async (req, res) => {
+  const removed = await removeLabel(req.params.sessionId);
   res.json({ removed });
 }));
 
@@ -340,11 +364,13 @@ app.post('/api/sessions/:sessionId/focus', asyncH(async (req, res) => {
   const sessions = await listSessions();
   const s = sessions.find((x) => x.sessionId === sessionId);
   if (!s) return res.status(404).json({ error: `session ${sessionId} not live` });
+  const cfg = await loadConfig();
   const result = await focusBySession({
     pid: s.pid,
     sessionId: s.sessionId,
     title: s.title,
     cwd: s.cwd,
+    moveToCenter: !!cfg.focusMovesToCenter,
   });
   res.json({ session: { pid: s.pid, sessionId: s.sessionId, cwd: s.cwd, title: s.title }, ...result });
 }));
@@ -353,7 +379,8 @@ app.post('/api/sessions/:sessionId/focus', asyncH(async (req, res) => {
 app.get('/api/terminals', (_req, res) => res.json({ terminals: listTerminalKinds() }));
 
 // ---- health ----
-app.get('/api/health', (_req, res) => res.json({ ok: true, pid: process.pid }));
+const pkg = require('./package.json');
+app.get('/api/health', (_req, res) => res.json({ ok: true, pid: process.pid, version: pkg.version, name: pkg.name }));
 
 // ---- auto-snapshot scheduler ----
 let snapshotTimer = null;

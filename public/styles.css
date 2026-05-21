@@ -61,6 +61,7 @@
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
+[hidden] { display: none !important; }
 
 html, body {
   background: var(--bg);
@@ -124,10 +125,9 @@ html, body {
   width: 32px;
   height: 32px;
   flex: 0 0 32px;
-  background: var(--accent);
-  color: var(--bg-elev);
-  border-radius: var(--r-sm);
+  background: transparent;  /* SVG draws its own terminal window */
 }
+.brand-mark svg { display: block; }
 .brand-name {
   font-size: 19px;
   font-weight: 600;
@@ -155,7 +155,8 @@ html, body {
   align-items: center;
   gap: var(--s-3);
   width: 100%;
-  padding: 8px 10px;
+  padding: 0 10px;
+  min-height: 36px;             /* uniform across nav + util items */
   border-radius: var(--r-sm);
   cursor: pointer;
   color: var(--ink-mid);
@@ -184,6 +185,30 @@ html, body {
   width: 3px;
   background: var(--accent);
   border-radius: 2px;
+}
+
+/* "Has unsaved changes" indicator — small accent dot next to the label */
+.nav-item.has-changes::after {
+  content: "";
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 0 rgba(196, 95, 63, 0.45);
+  animation: dirty-pulse 2s ease-in-out infinite;
+}
+@keyframes dirty-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(196, 95, 63, 0.45); }
+  50%      { box-shadow: 0 0 0 5px rgba(196, 95, 63, 0); }
+}
+.sidebar[data-collapsed="true"] .nav-item.has-changes::after {
+  right: auto;
+  top: 6px;
+  left: 28px;
 }
 .nav-icon {
   display: inline-flex;
@@ -324,6 +349,61 @@ html, body {
 .ph-val { color: var(--ink-mid); }
 .ph-divider { color: var(--ink-faint); }
 
+/* Server status pill — "● online v0.5.0" / "● offline" */
+.server-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px 2px 7px;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  color: var(--ink-mid);
+  transition: background .15s ease, border-color .15s ease, color .15s ease;
+  cursor: default;
+}
+.server-status .status-pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ink-faint);
+  flex: 0 0 6px;
+  position: relative;
+}
+.server-status[data-state="online"] {
+  border-color: rgba(74, 138, 74, 0.35);
+  background: rgba(74, 138, 74, 0.06);
+  color: var(--green);
+}
+.server-status[data-state="online"] .status-pulse {
+  background: var(--green);
+  animation: server-pulse 2.2s ease-in-out infinite;
+}
+.server-status[data-state="offline"] {
+  border-color: rgba(183, 63, 63, 0.4);
+  background: rgba(183, 63, 63, 0.06);
+  color: var(--red);
+}
+.server-status[data-state="offline"] .status-pulse {
+  background: var(--red);
+}
+.server-status[data-state="connecting"] {
+  border-color: rgba(196, 137, 43, 0.4);
+  background: rgba(196, 137, 43, 0.06);
+  color: var(--yellow);
+}
+.server-status[data-state="connecting"] .status-pulse {
+  background: var(--yellow);
+  animation: server-pulse 1s ease-in-out infinite;
+}
+@keyframes server-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 currentColor; }
+  50%      { box-shadow: 0 0 0 4px transparent; }
+}
+
 .content {
   flex: 1;
   display: flex;
@@ -360,9 +440,48 @@ html, body {
   padding: var(--s-4) var(--s-6) var(--s-3);
   border-bottom: 1px solid var(--border-soft);
   display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: var(--s-4);
+  justify-content: flex-start;
+  align-items: center;
+  gap: var(--s-3);
+}
+/* Make the whole header clickable to fold (only when card is foldable) */
+.card[data-fold-key] .card-head {
+  cursor: pointer;
+  user-select: none;
+  transition: background .12s ease;
+}
+.card[data-fold-key] .card-head:hover {
+  background: var(--bg);
+}
+.card[data-collapsed] .card-head { border-bottom-color: transparent; }
+.card-titles { flex: 1; min-width: 0; }
+
+/* Fold toggle button in card head */
+.card-fold {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 4px;
+  margin: 0;
+  cursor: pointer;
+  color: var(--ink-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: color .12s ease, background .12s ease, transform .25s cubic-bezier(.4, 0, .2, 1);
+  line-height: 0;
+  flex: 0 0 auto;
+}
+.card-fold:hover {
+  color: var(--ink);
+  background: var(--bg);
+}
+.card[data-collapsed] .card-fold {
+  transform: rotate(-90deg);
+}
+.card[data-collapsed] .card-body {
+  display: none;
 }
 .card-titles { min-width: 0; }
 .card-title {
@@ -394,20 +513,34 @@ html, body {
    Page-level inline actions (above the cards on a tab)
    ───────────────────────────────────────────────────────────── */
 
+/* CTA banner — visually distinct from the data cards: subtle accent tint,
+   no card shadow, dashed-ish bottom rule, no rounded corners as heavy.
+   Reads as "tip / shortcut" rather than another data section. */
 .page-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--s-4);
   padding: var(--s-3) var(--s-5);
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  box-shadow: var(--shadow-sm);
+  background: linear-gradient(180deg, rgba(196,95,63,0.06), rgba(196,95,63,0.02));
+  border: 1px solid rgba(196,95,63,0.18);
+  border-radius: var(--r-sm);
+  box-shadow: none;
+  position: relative;
+}
+.page-actions::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 8px; bottom: 8px;
+  width: 2px;
+  background: var(--accent);
+  border-radius: 0 2px 2px 0;
 }
 .page-actions-hint {
   font-size: 13px;
-  color: var(--ink-mid);
+  color: var(--accent-deep);
+  font-weight: 500;
+  padding-left: var(--s-2);
 }
 .page-actions .action svg { stroke-width: 2; }
 
@@ -417,10 +550,15 @@ html, body {
 
 .table-scroll {
   overflow-x: auto;
-  /* fade out the right edge slightly when scrollable, like a hint */
+  /* tactile: scroll-padding so the actions column edges aren't flush against
+     the viewport when you scroll right to reach the buttons */
+  scroll-padding-right: var(--s-6);
 }
-.table-scroll .data { min-width: 760px; }
 .table-scroll::-webkit-scrollbar { height: 8px; }
+.table-scroll .data {
+  min-width: 960px;
+  table-layout: auto;
+}
 
 .data {
   width: 100%;
@@ -443,11 +581,39 @@ html, body {
   white-space: nowrap;
 }
 .data thead th.num { text-align: right; }
-.data thead th.col-mark { width: 28px; padding-left: 0; padding-right: 0; }
-.data thead th.col-star { width: 28px; padding-left: 0; padding-right: 0; }
-.data thead th.col-actions { width: 1px; }
+/* shrink-to-fit pattern: width:1% with nowrap → the cell only takes the
+   space its content needs, the title / path cells get the remainder */
+.data thead th.col-mark    { width: 28px; padding-left: 0; padding-right: 0; }
+.data thead th.col-star    { width: 28px; padding-left: 0; padding-right: 0; }
+.data thead th.col-actions { width: 1%;   white-space: nowrap; }
+.data thead th.num         { width: 1%;   white-space: nowrap; }
+.data tbody td.num         { white-space: nowrap; }
+.data tbody td:last-child  { white-space: nowrap; }
 .data thead th:first-child { padding-left: var(--s-6); }
-.data thead th:last-child { padding-right: var(--s-6); }
+.data thead th:last-child  { padding-right: var(--s-6); }
+
+/* ── Sticky actions column ──
+   The last column (Focus/Resume/Continue buttons) stays pinned to the
+   right edge of the .table-scroll container while horizontal scroll happens
+   underneath. Backgrounds must be solid because sticky cells overlay the
+   content scrolling beneath them. */
+.data thead th:last-child,
+.data tbody td:last-child {
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  /* fade the seam into the cell so it doesn't look like a hard cut */
+  box-shadow: -10px 0 10px -8px rgba(26, 24, 21, 0.08);
+}
+.data thead th:last-child {
+  background: var(--bg);    /* matches thead bg */
+}
+.data tbody td:last-child {
+  background: var(--bg-elev); /* matches card bg */
+}
+.data tbody tr:hover td:last-child {
+  background: var(--bg);    /* match row hover */
+}
 
 .data tbody tr {
   border-bottom: 1px solid var(--border-soft);
@@ -519,13 +685,21 @@ html, body {
   }
 }
 
-/* Composite cells */
-.title-cell { max-width: 420px; min-width: 0; }
+/* Composite cells — title and path are fixed-width with overflow ellipsis
+   on the inner spans, so the actions column is always visible without
+   horizontal scroll at typical viewport widths. Long titles / paths
+   truncate with ellipsis (hover shows full value via title attribute). */
+.title-cell {
+  width: 300px;
+  max-width: 300px;
+  min-width: 0;
+}
 .title-cell .title-row {
   display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
+  width: 100%;
 }
 .title-cell .primary {
   color: var(--ink);
@@ -543,13 +717,18 @@ html, body {
   color: var(--ink-muted);
   letter-spacing: 0.02em;
   margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .path-cell {
   font-family: var(--mono);
   font-size: 11.5px;
   color: var(--ink-mid);
-  max-width: 380px;
+  width: 260px;
+  max-width: 260px;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -573,8 +752,8 @@ html, body {
 }
 
 /* Star button (favorite toggle) — sits inline next to the title text.
-   Outline by default (faint), fades in to ink on row hover, fills with
-   the accent color when starred. */
+   Outline by default, brightens on hover, fills with the accent color
+   when starred. */
 .star-btn {
   appearance: none;
   background: transparent;
@@ -582,7 +761,7 @@ html, body {
   padding: 2px;
   margin: 0;
   cursor: pointer;
-  color: var(--border-strong);
+  color: var(--ink-muted);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -590,29 +769,66 @@ html, body {
   transition: color .12s ease, background .12s ease, transform .15s ease;
   line-height: 0;
   flex: 0 0 auto;
-  opacity: 0.55;
 }
 .data tbody tr:hover .star-btn {
-  opacity: 1;
-  color: var(--ink-faint);
+  color: var(--ink-mid);
 }
 .star-btn:hover {
   color: var(--accent) !important;
   background: var(--accent-softer);
-  opacity: 1 !important;
 }
 .star-btn:active { transform: scale(0.88); }
 .star-btn.is-fav {
   color: var(--accent);
-  opacity: 1;
 }
 .star-btn svg { display: block; }
+
+/* Rename (pencil) button — inline next to title, only visible on row hover
+   so it doesn't compete with the star or distract from the title. When a
+   label exists (`has-label`), it stays subtly visible so the user knows
+   the title is overridden. */
+.rename-btn {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 2px;
+  margin: 0;
+  cursor: pointer;
+  color: var(--ink-faint);
+  opacity: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: opacity .12s ease, color .12s ease, background .12s ease, transform .15s ease;
+  line-height: 0;
+  flex: 0 0 auto;
+}
+.data tbody tr:hover .rename-btn {
+  opacity: 1;
+  color: var(--ink-muted);
+}
+.rename-btn:hover {
+  color: var(--accent) !important;
+  background: var(--accent-softer);
+}
+.rename-btn:active { transform: scale(0.88); }
+.rename-btn.has-label {
+  opacity: 0.8;
+  color: var(--accent);
+}
+.rename-btn svg { display: block; }
 
 /* Title with icon glyph */
 .card-title .title-icon {
   color: var(--accent);
   margin-right: 6px;
   vertical-align: -2px;
+}
+.card-title .title-icon-after {
+  margin-right: 0;
+  margin-left: 6px;
+  vertical-align: -1px;
 }
 
 /* Favorites empty state — sits inside the card body (not generic table empty) */
@@ -1172,6 +1388,225 @@ input[type="checkbox"]:checked::after {
 }
 .toast.error { border-left-color: var(--red); }
 .toast.ok    { border-left-color: var(--green); }
+
+/* ─────────────────────────────────────────────────────────────
+   FAB · floating action button (bottom-right "+ new session")
+   ───────────────────────────────────────────────────────────── */
+
+.fab {
+  position: fixed;
+  bottom: var(--s-6);
+  right: var(--s-6);
+  z-index: 90;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--bg-elev);
+  border: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow:
+    0 8px 24px -6px rgba(196, 95, 63, 0.5),
+    0 2px 6px -1px rgba(26, 24, 21, 0.15);
+  transition: background .12s ease, transform .15s ease, box-shadow .15s ease;
+}
+.fab:hover {
+  background: var(--accent-deep);
+  transform: translateY(-1px) scale(1.04);
+  box-shadow:
+    0 12px 28px -6px rgba(196, 95, 63, 0.6),
+    0 4px 10px -2px rgba(26, 24, 21, 0.2);
+}
+.fab:active { transform: scale(0.96); }
+
+/* ─────────────────────────────────────────────────────────────
+   Modal dialog
+   ───────────────────────────────────────────────────────────── */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(26, 24, 21, 0.42);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s-6);
+  animation: backdrop-in .18s ease;
+}
+@keyframes backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+
+.modal {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  width: min(560px, 100%);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow:
+    0 24px 64px -16px rgba(26, 24, 21, 0.35),
+    0 4px 12px -2px rgba(26, 24, 21, 0.15);
+  animation: modal-in .22s cubic-bezier(.4, 0, .2, 1);
+}
+@keyframes modal-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--s-4) var(--s-6);
+  border-bottom: 1px solid var(--border-soft);
+}
+.modal-head h2 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.modal-close {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 4px;
+  margin: -4px;
+  cursor: pointer;
+  color: var(--ink-muted);
+  border-radius: 4px;
+  display: inline-flex;
+  transition: color .12s ease, background .12s ease;
+}
+.modal-close:hover { color: var(--ink); background: var(--bg); }
+
+.modal-body {
+  padding: var(--s-5) var(--s-6);
+  overflow-y: auto;
+  flex: 1;
+}
+.modal-hint {
+  font-size: 13px;
+  color: var(--ink-muted);
+  margin-bottom: var(--s-4);
+}
+.modal-hint code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  background: var(--bg);
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--border-soft);
+}
+
+.modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-6);
+  border-top: 1px solid var(--border-soft);
+  background: var(--bg);
+}
+
+.repos-inline-config {
+  margin: var(--s-3) 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+}
+.repos-inline-config summary {
+  cursor: pointer;
+  padding: 8px var(--s-3);
+  font-size: 12.5px;
+  color: var(--ink-mid);
+  font-weight: 500;
+  user-select: none;
+}
+.repos-inline-config summary::marker { color: var(--accent); }
+.repos-inline-config summary:hover { color: var(--ink); }
+.repos-inline-config[open] summary { border-bottom: 1px solid var(--border); }
+.repos-inline-body {
+  padding: var(--s-3);
+  background: var(--bg-elev);
+  border-radius: 0 0 var(--r-sm) var(--r-sm);
+}
+.repos-inline-actions {
+  display: flex;
+  gap: var(--s-3);
+  align-items: center;
+  margin-top: var(--s-3);
+}
+
+/* Unsaved-changes banner in Configure tab — sticky-ish callout above the
+   settings card. Mirrors the accent CTA banner pattern but louder. */
+.dirty-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-5);
+  background: linear-gradient(180deg, rgba(196,95,63,0.12), rgba(196,95,63,0.06));
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  color: var(--accent-deep);
+  font-size: 13px;
+  font-weight: 500;
+  position: sticky;
+  top: var(--s-3);
+  z-index: 10;
+  box-shadow: 0 4px 16px -8px rgba(196, 95, 63, 0.4);
+  animation: banner-in .25s cubic-bezier(.4, 0, .2, 1);
+}
+@keyframes banner-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.dirty-banner .dirty-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: 0 0 8px;
+  box-shadow: 0 0 0 0 rgba(196, 95, 63, 0.5);
+  animation: dirty-pulse 2s ease-in-out infinite;
+}
+.dirty-banner .dirty-text { flex: 1; }
+
+/* Save button "pulse" when there are unsaved changes */
+.action.primary.is-dirty {
+  animation: save-pulse 1.6s ease-in-out infinite;
+}
+@keyframes save-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(196, 95, 63, 0.4); }
+  50%      { box-shadow: 0 0 0 6px rgba(196, 95, 63, 0); }
+}
+
+/* Ad-hoc dialog variant (confirm / prompt) — narrower than the main modal */
+.modal-dialog { width: min(440px, 100%); }
+.modal-dialog .modal-head { padding: var(--s-4) var(--s-5) var(--s-3); border-bottom: 0; }
+.modal-dialog .modal-head h2 {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.4;
+}
+.modal-dialog .modal-body { padding: 0 var(--s-5) var(--s-4); }
+.dialog-msg {
+  font-size: 13.5px;
+  color: var(--ink-mid);
+  line-height: 1.55;
+}
+.modal-dialog .modal-foot { padding: var(--s-3) var(--s-5); }
+.modal-dialog input[type="text"] {
+  width: 100%;
+  max-width: none;
+  margin-top: var(--s-2);
+}
 
 /* ─────────────────────────────────────────────────────────────
    Small utilities

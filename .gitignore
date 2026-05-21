@@ -4,6 +4,7 @@ data/snapshot.json
 data/config.json
 data/server.log
 data/tmp-*
+data/ui-*.png
 *.log
 .playwright-cli/
 ccsm-workspaces/

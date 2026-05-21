@@ -3,7 +3,8 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>ccsm</title>
+    <title>CCSM — Claude CLI Sessions Manager</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -18,13 +19,23 @@
       <aside class="sidebar" id="sidebar" data-collapsed="false">
         <div class="sidebar-brand">
           <span class="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M3 6h2l1 12h12l1-12h2"/>
-              <path d="M9 10v4"/>
-              <path d="M15 10v4"/>
+            <!-- terminal window with ccsm inside · matches favicon -->
+            <svg viewBox="0 0 32 32" width="32" height="32">
+              <rect x="2" y="4" width="28" height="24" rx="3" fill="#c45f3f"/>
+              <line x1="2" y1="10" x2="30" y2="10" stroke="#faf9f5" stroke-width="0.6" opacity="0.45"/>
+              <circle cx="6"   cy="7" r="1" fill="#faf9f5"/>
+              <circle cx="9.5" cy="7" r="1" fill="#faf9f5" opacity="0.65"/>
+              <circle cx="13"  cy="7" r="1" fill="#faf9f5" opacity="0.4"/>
+              <text x="16" y="19.5"
+                    text-anchor="middle"
+                    dominant-baseline="central"
+                    font-family="'JetBrains Mono', 'Cascadia Mono', 'Consolas', monospace"
+                    font-weight="700"
+                    font-size="10"
+                    fill="#faf9f5">ccsm</text>
             </svg>
           </span>
-          <span class="brand-name">ccsm<span class="brand-dot">.</span></span>
+          <span class="brand-name">CCSM<span class="brand-dot">.</span></span>
         </div>
 
         <nav class="sidebar-nav" role="tablist" aria-label="Sections">
@@ -72,15 +83,6 @@
             </span>
             <span class="nav-label">Refresh</span>
           </button>
-          <button class="util-item util-accent" id="finderBtn" title="open a Claude session pointed at ccsm data">
-            <span class="nav-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="11" cy="11" r="7"/>
-                <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-              </svg>
-            </span>
-            <span class="nav-label">Ask Claude</span>
-          </button>
         </div>
 
         <div class="sidebar-foot">
@@ -100,6 +102,11 @@
             <p class="page-subtitle" id="pageSubtitle">Live and recently-closed Claude Code sessions on this machine.</p>
           </div>
           <div class="page-head-meta">
+            <span class="server-status" id="serverStatus" data-state="connecting" title="backend status">
+              <span class="status-pulse" aria-hidden="true"></span>
+              <span class="server-status-label" id="serverStatusLabel">connecting…</span>
+            </span>
+            <span class="ph-divider">·</span>
             <span class="ph-stat"><span class="ph-key">Port</span> <span class="ph-val" id="hdPort">—</span></span>
             <span class="ph-divider">·</span>
             <span class="ph-stat"><span class="ph-key">Terminal</span> <span class="ph-val" id="hdTerminal">—</span></span>
@@ -122,14 +129,17 @@
               </button>
             </div>
 
-            <article class="card" id="favoritesCard">
+            <article class="card" id="favoritesCard" data-fold-key="favorites">
               <header class="card-head">
+                <button class="card-fold" data-fold aria-label="collapse">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
                 <div class="card-titles">
                   <h2 class="card-title">
-                    <svg class="title-icon" viewBox="0 0 24 24" width="15" height="15" fill="currentColor" stroke="none" aria-hidden="true">
+                    Favorites
+                    <svg class="title-icon title-icon-after" viewBox="0 0 24 24" width="14" height="14" fill="currentColor" stroke="none" aria-hidden="true">
                       <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
                     </svg>
-                    Favorites
                   </h2>
                   <p class="card-meta" id="favoritesMeta">click ☆ on any row to pin sessions here</p>
                 </div>
@@ -150,11 +160,24 @@
                   </table>
                 </div>
                 <div class="empty" id="favoritesEmpty">No favorites yet. Star a session row to pin it here.</div>
+                <footer class="pagination" id="favoritesPagination" hidden>
+                  <button class="action subtle small" id="favPrevBtn" disabled>← Prev</button>
+                  <span class="pagination-info">Page <strong id="favPageNum">1</strong> of <strong id="favPageTotal">1</strong> · <span id="favTotal">0</span> total</span>
+                  <button class="action subtle small" id="favNextBtn" disabled>Next →</button>
+                  <select id="favPageSize" class="input" style="max-width: 100px;">
+                    <option value="10" selected>10 / page</option>
+                    <option value="20">20 / page</option>
+                    <option value="50">50 / page</option>
+                  </select>
+                </footer>
               </div>
             </article>
 
-            <article class="card">
+            <article class="card" data-fold-key="sessions">
               <header class="card-head">
+                <button class="card-fold" data-fold aria-label="collapse">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
                 <div class="card-titles">
                   <h2 class="card-title">Live sessions</h2>
                   <p class="card-meta" id="sessionsMeta">awaiting…</p>
@@ -178,11 +201,24 @@
                   </table>
                 </div>
                 <div class="empty" id="sessionsEmpty" hidden>No live sessions detected.</div>
+                <footer class="pagination" id="sessionsPagination" hidden>
+                  <button class="action subtle small" id="sessPrevBtn" disabled>← Prev</button>
+                  <span class="pagination-info">Page <strong id="sessPageNum">1</strong> of <strong id="sessPageTotal">1</strong> · <span id="sessTotal">0</span> total</span>
+                  <button class="action subtle small" id="sessNextBtn" disabled>Next →</button>
+                  <select id="sessPageSize" class="input" style="max-width: 100px;">
+                    <option value="10" selected>10 / page</option>
+                    <option value="20">20 / page</option>
+                    <option value="50">50 / page</option>
+                  </select>
+                </footer>
               </div>
             </article>
 
-            <article class="card">
+            <article class="card" data-fold-key="recent">
               <header class="card-head">
+                <button class="card-fold" data-fold aria-label="collapse">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
                 <div class="card-titles">
                   <h2 class="card-title">Recently closed</h2>
                   <p class="card-meta" id="recentMeta">…</p>
@@ -210,9 +246,8 @@
                   <span class="pagination-info">Page <strong id="recentPageNum">1</strong> of <strong id="recentPageTotal">1</strong> · <span id="recentTotal">0</span> total</span>
                   <button class="action subtle small" id="recentNextBtn" disabled>Next →</button>
                   <select id="recentPageSize" class="input" style="max-width: 100px;">
-                    <option value="10">10 / page</option>
-                    <option value="15" selected>15 / page</option>
-                    <option value="25">25 / page</option>
+                    <option value="10" selected>10 / page</option>
+                    <option value="20">20 / page</option>
                     <option value="50">50 / page</option>
                   </select>
                 </footer>
@@ -287,6 +322,12 @@
 
           <!-- ─── Configure tab ─── -->
           <section class="tab-panel" data-panel="configure">
+            <div class="dirty-banner" id="configDirtyBanner" hidden>
+              <span class="dirty-dot"></span>
+              <span class="dirty-text">You have unsaved changes</span>
+              <button class="action small primary" id="dirtyBannerSaveBtn">Save now</button>
+              <button class="action small subtle" id="dirtyBannerDiscardBtn">Discard</button>
+            </div>
             <article class="card">
               <header class="card-head">
                 <div class="card-titles">
@@ -345,6 +386,13 @@
                       <span class="hint">raise newly-launched terminal window</span>
                     </span>
                   </label>
+                  <label class="field toggle">
+                    <input id="cfgFocusCenter" type="checkbox" />
+                    <span class="toggle-text">
+                      <span class="label">Move focused window to screen center</span>
+                      <span class="hint">centers the focused window on whichever monitor the cursor is on</span>
+                    </span>
+                  </label>
                   <label class="field full">
                     <span class="label">Finder prompt</span>
                     <textarea id="cfgFinderPrompt" rows="3"></textarea>
@@ -385,6 +433,70 @@
           <span class="fs-key">Workspaces</span> <span class="fs-val" id="footWorkDir">—</span>
         </footer>
       </main>
+    </div>
+
+    <!-- Floating "new session" action button — always visible bottom-right -->
+    <button class="fab" id="newSessionFab" title="Launch new session" aria-label="Launch new session">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <line x1="12" y1="5" x2="12" y2="19"/>
+        <line x1="5" y1="12" x2="19" y2="12"/>
+      </svg>
+    </button>
+
+    <!-- New-session modal -->
+    <div class="modal-backdrop" id="newSessionModal" hidden role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="modal">
+        <header class="modal-head">
+          <h2 id="modalTitle">Launch new session</h2>
+          <button class="modal-close" id="modalCloseBtn" aria-label="close">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </header>
+        <div class="modal-body">
+          <p class="modal-hint">Pick an unused workspace, clone any missing repos, open <code>claude</code> in a fresh terminal.</p>
+
+          <div class="form-row">
+            <span class="form-label">Repos</span>
+            <div class="chip-row" id="modalRepoPicker"></div>
+          </div>
+
+          <details class="repos-inline-config">
+            <summary>Manage repos</summary>
+            <div class="repos-inline-body">
+              <table class="data repos-table" id="modalReposTable">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>URL</th>
+                    <th class="num">Default</th>
+                    <th class="col-actions"></th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+              <div class="repos-inline-actions">
+                <button class="action small" id="modalAddRepoBtn">+ Add repo</button>
+                <button class="action small primary" id="modalSaveReposBtn">Save changes</button>
+                <span class="muted-text" id="modalReposSavedAt"></span>
+              </div>
+            </div>
+          </details>
+
+          <div class="form-row">
+            <label class="form-label" for="modalWorkspaceSelect">Workspace</label>
+            <select id="modalWorkspaceSelect" class="input narrow">
+              <option value="">auto — find or create unused</option>
+            </select>
+          </div>
+
+          <div id="modalProgress" class="progress-list"></div>
+          <div class="post-result" id="modalResult"></div>
+        </div>
+        <footer class="modal-foot">
+          <button class="action" id="modalCancelBtn">Cancel</button>
+          <button class="action primary" id="modalLaunchBtn">Launch new session</button>
+        </footer>
+      </div>
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
