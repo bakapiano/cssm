@@ -36,4 +36,13 @@ render(html`<${App} />`, document.getElementById('app'));
     pollHealth();
     clockTick.value = Date.now();
   }, 5000);
+
+  // Heartbeat — safety net for the server's "exit when nobody's around"
+  // logic. The primary mechanism is OS-level (browser child exit), this is
+  // a slow backup. 30s cadence; immediate ping on visibility change so the
+  // server doesn't time out the moment the laptop wakes.
+  const ping = () => fetch('/api/heartbeat', { method: 'POST', keepalive: true }).catch(() => {});
+  ping();
+  setInterval(ping, 30_000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) ping(); });
 })();

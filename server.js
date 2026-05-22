@@ -416,6 +416,29 @@ app.get('/api/terminals', (_req, res) => res.json({ terminals: listTerminalKinds
 const pkg = require('./package.json');
 app.get('/api/health', (_req, res) => res.json({ ok: true, pid: process.pid, version: pkg.version, name: pkg.name }));
 
+// ---- lifecycle ----
+// State shared by /api/spawn-browser (opens another window into this server)
+// and the heartbeat watchdog (exits the server if no client has pinged for
+// HEARTBEAT_TIMEOUT_MS). Heartbeat is the safety net behind the primary
+// "browser child exits → server exits" mechanism wired up after listen.
+let currentPort = 0;
+let lastHeartbeat = Date.now();
+let heartbeatSeen = false;
+const HEARTBEAT_TIMEOUT_MS = 90_000;
+
+app.post('/api/heartbeat', (_req, res) => {
+  lastHeartbeat = Date.now();
+  heartbeatSeen = true;
+  res.json({ ok: true });
+});
+
+app.post('/api/spawn-browser', asyncH(async (_req, res) => {
+  const cfg = await loadConfig();
+  const mode = cfg.browserMode || (cfg.autoOpenBrowser === false ? 'none' : 'app');
+  openInBrowser(`http://localhost:${currentPort}`, mode);
+  res.json({ ok: true, mode });
+}));
+
 // ---- auto-snapshot scheduler ----
 let snapshotTimer = null;
 async function startSnapshotLoop() {
@@ -513,6 +536,7 @@ function openInBrowser(url, mode) {
 (async () => {
   const cfg = await loadConfig();
   const { port } = await listenWithFallback(cfg.port);
+  currentPort = port;
   const url = `http://localhost:${port}`;
   console.log(`ccsm listening on ${url}${port !== cfg.port ? `  (requested ${cfg.port}, was taken)` : ''}`);
   console.log(`data dir:        ${DATA_DIR}`);
@@ -521,17 +545,37 @@ function openInBrowser(url, mode) {
   const mode = cfg.browserMode || (cfg.autoOpenBrowser === false ? 'none' : 'app');
   const opened = openInBrowser(url, mode);
 
-  // Interactive npx-style launch: tie server lifetime to the chromeless
-  // browser window. When the user closes the window, msedge.exe (with its
-  // own --user-data-dir process group) exits — we hear that and shut down
-  // so the terminal returns. Headless / nohup launches stay running.
-  if (opened.kind === 'app' && opened.child && process.stdout.isTTY) {
+  // Primary lifecycle: tie this server's lifetime to the chromeless
+  // browser window. msedge.exe runs with its own --user-data-dir process
+  // group, so when the user closes the window it actually exits — and
+  // the spawned child handle we hold here fires 'exit'. Skip if the user
+  // explicitly asked the server to stay alive (e.g. an automation host).
+  if (opened.kind === 'app' && opened.child && process.env.CCSM_KEEP_ALIVE !== '1') {
     opened.child.on('exit', () => {
       console.log('[ccsm] browser window closed · shutting down');
       process.exit(0);
     });
     console.log('[ccsm] tied to browser window — close it to stop ccsm');
   }
+
+  // Heartbeat watchdog · only activated when launched via bin/ccsm.js
+  // (CCSM_LAUNCHER=1). Catches cases the primary mechanism misses: the
+  // browser was killed forcibly, msedge crashed without a clean exit, or
+  // the user opened the URL in tab-mode in their own browser instead of
+  // the chromeless app window. We don't kill until we've seen at least
+  // one heartbeat — that way a freshly-booted server with no client yet
+  // doesn't suicide.
+  if (process.env.CCSM_LAUNCHER === '1' && process.env.CCSM_KEEP_ALIVE !== '1') {
+    setInterval(() => {
+      if (!heartbeatSeen) return;
+      if (Date.now() - lastHeartbeat > HEARTBEAT_TIMEOUT_MS) {
+        console.log(`[ccsm] no heartbeat for ${HEARTBEAT_TIMEOUT_MS / 1000}s · shutting down`);
+        process.exit(0);
+      }
+    }, 30_000);
+    console.log('[ccsm] heartbeat watchdog active');
+  }
+
   startSnapshotLoop();
 })().catch((err) => {
   console.error('startup failed:', err);
