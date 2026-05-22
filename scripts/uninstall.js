@@ -4,6 +4,8 @@
 // Reverse of install.js · unregister ccsm:// and ask any running backend
 // to shut down. Triggered by `npm uninstall -g @bakapiano/ccsm`.
 
+const path = require('node:path');
+const fs = require('node:fs');
 const http = require('node:http');
 const { spawnSync } = require('node:child_process');
 
@@ -35,9 +37,21 @@ function deleteRegKey() {
   }
 }
 
+function deleteLauncherVbs() {
+  const home = process.env.LOCALAPPDATA || process.env.APPDATA;
+  if (!home) return;
+  const dir = path.join(home, 'ccsm');
+  const vbs = path.join(dir, 'launcher.vbs');
+  if (fs.existsSync(vbs)) fs.unlinkSync(vbs);
+  // Remove the (now-empty) folder if we created it.
+  try { fs.rmdirSync(dir); } catch {}
+}
+
 (async () => {
   await shutdownIfRunning();
   try { deleteRegKey(); log('ccsm:// protocol unregistered'); }
-  catch (e) { warn(`failed · ${e.message}`); }
+  catch (e) { warn(`reg cleanup failed · ${e.message}`); }
+  try { deleteLauncherVbs(); log('launcher.vbs removed'); }
+  catch (e) { warn(`vbs cleanup failed · ${e.message}`); }
   log('done.');
 })();

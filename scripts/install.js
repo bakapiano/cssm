@@ -40,10 +40,41 @@ function findCcsmCmd() {
   return fs.existsSync(candidate) ? candidate : null;
 }
 
-function registerProtocol(ccsmCmd) {
-  // %1 = the entire ccsm:// URL the user clicked. bin/ccsm.js parses
-  // it and dispatches by action (start, etc.).
-  const command = `"${ccsmCmd}" "%1"`;
+// Write a tiny VBScript wrapper that ccsm:// dispatches into. Why VBS:
+// wscript.exe is a Windows-subsystem host (no console window), and
+// `Shell.Run(..., 0, False)` launches the target completely hidden — so
+// when the user clicks ccsm://start, NOTHING flashes on screen, the
+// backend just appears in the next health probe.
+function writeLauncherVbs(ccsmCmd) {
+  const home = process.env.LOCALAPPDATA || process.env.APPDATA;
+  if (!home) throw new Error('no LOCALAPPDATA/APPDATA env var');
+  const dir = path.join(home, 'ccsm');
+  fs.mkdirSync(dir, { recursive: true });
+  const vbsPath = path.join(dir, 'launcher.vbs');
+  // Escape any double-quotes in the cmd path (rare but possible).
+  const cmdEsc = ccsmCmd.replace(/"/g, '""');
+  const vbs = [
+    "' ccsm protocol launcher · invoked by wscript.exe via the registered",
+    "' ccsm:// URL handler. Spawns ccsm.cmd with WindowStyle 0 (hidden) +",
+    "' bWaitOnReturn=False (async), so the click leaves zero visible trace.",
+    'If WScript.Arguments.Count >= 1 Then',
+    '  arg = WScript.Arguments(0)',
+    'Else',
+    '  arg = ""',
+    'End If',
+    'Set sh = CreateObject("WScript.Shell")',
+    `sh.Run """${cmdEsc}"" """ & arg & """", 0, False`,
+    '',
+  ].join('\r\n');
+  fs.writeFileSync(vbsPath, vbs, { encoding: 'utf8' });
+  return vbsPath;
+}
+
+function registerProtocol(vbsPath) {
+  // wscript.exe is a no-console host. The protocol-registered command
+  // hands the entire ccsm:// URL to launcher.vbs as argv[0]; the VBS
+  // forwards it to ccsm.cmd "%1" with a hidden window.
+  const command = `wscript.exe "${vbsPath}" "%1"`;
   const root = 'HKCU\\Software\\Classes\\ccsm';
   const calls = [
     ['add', root, '/ve', '/d', 'URL:ccsm protocol', '/f'],
@@ -67,8 +98,10 @@ if (!ccsmCmd) {
 }
 
 try {
-  registerProtocol(ccsmCmd);
-  log(`ccsm:// protocol registered → ${ccsmCmd} %1`);
+  const vbsPath = writeLauncherVbs(ccsmCmd);
+  registerProtocol(vbsPath);
+  log(`launcher · ${vbsPath}`);
+  log(`ccsm:// protocol registered (silent · via wscript.exe)`);
   log('open https://bakapiano.github.io/cssm/v1/ and click "Start ccsm" on the offline banner to launch the backend.');
 } catch (e) {
   warn(`failed · ${e.message}`);

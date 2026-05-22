@@ -522,6 +522,7 @@ app.get('/api/health', (_req, res) => res.json({ ok: true, pid: process.pid, ver
 // HEARTBEAT_TIMEOUT_MS). Heartbeat is the safety net behind the primary
 // "browser child exits → server exits" mechanism wired up after listen.
 let currentPort = 0;
+let frontendUrl = '';
 let lastHeartbeat = Date.now();
 let heartbeatSeen = false;
 const HEARTBEAT_TIMEOUT_MS = 90_000;
@@ -535,8 +536,8 @@ app.post('/api/heartbeat', (_req, res) => {
 app.post('/api/spawn-browser', asyncH(async (_req, res) => {
   const cfg = await loadConfig();
   const mode = cfg.browserMode || (cfg.autoOpenBrowser === false ? 'none' : 'app');
-  openInBrowser(`http://localhost:${currentPort}`, mode);
-  res.json({ ok: true, mode });
+  openInBrowser(frontendUrl || `http://localhost:${currentPort}`, mode);
+  res.json({ ok: true, mode, url: frontendUrl });
 }));
 
 // Graceful shutdown · the uninstall script and the auto-upgrade path in
@@ -681,8 +682,16 @@ function openInBrowser(url, mode) {
   // Last-resort cleanup on sync exit (process.on('exit') can't await
   // anything, so it's only a safety net for PTY children).
   process.on('exit', () => { try { webTerminal.killAll(); } catch {} });
-  const url = `http://localhost:${port}`;
-  console.log(`ccsm listening on ${url}${port !== cfg.port ? `  (requested ${cfg.port}, was taken)` : ''}`);
+  const apiUrl = `http://localhost:${port}`;
+  // What URL we open in the auto-spawned browser:
+  //   dev  → localhost (backend still serves public/ here)
+  //   prod → hosted frontend on GH Pages (backend is API-only)
+  const FRONTEND_URL = IS_DEV
+    ? apiUrl
+    : 'https://bakapiano.github.io/cssm/v1/';
+  frontendUrl = FRONTEND_URL;
+  console.log(`ccsm listening on ${apiUrl}${port !== cfg.port ? `  (requested ${cfg.port}, was taken)` : ''}`);
+  console.log(`frontend at      ${FRONTEND_URL}`);
   console.log(`data dir:        ${DATA_DIR}`);
   console.log(`work dir:        ${cfg.workDir}`);
   console.log(`terminal:        ${cfg.terminal} · ${cfg.claudeCommand}${cfg.terminal === 'wt' ? ` (via ${cfg.commandShell})` : ''}`);
@@ -692,7 +701,7 @@ function openInBrowser(url, mode) {
   const mode = process.env.CCSM_NO_BROWSER === '1'
     ? 'none'
     : (cfg.browserMode || (cfg.autoOpenBrowser === false ? 'none' : 'app'));
-  const opened = openInBrowser(url, mode);
+  const opened = openInBrowser(FRONTEND_URL, mode);
 
   // Primary lifecycle: tie this server's lifetime to the chromeless
   // browser window. msedge.exe runs with its own --user-data-dir process
@@ -711,13 +720,19 @@ function openInBrowser(url, mode) {
         console.log(`[ccsm] spawned browser child exited in ${alive}ms · handed off to an existing Edge instance, staying alive`);
         return;
       }
-      // If another client (e.g. a hosted-frontend tab at bakapiano.github.io
-      // /cssm/v1) is heartbeating, don't kill — they're still using us.
-      if (heartbeatSeen && (Date.now() - lastHeartbeat) < 30_000) {
-        console.log('[ccsm] browser closed but another client is heartbeating · staying alive');
-        return;
-      }
-      gracefulShutdown('browser window closed');
+      // Defer the kill decision by one full frontend ping cycle (~12s,
+      // matching the 10s heartbeat cadence below). Any heartbeat that
+      // arrives AFTER this moment must be from a DIFFERENT client (the
+      // closing browser couldn't ping after it died) — so a hosted-tab
+      // user is still around and we should stay alive.
+      const closedAt = Date.now();
+      setTimeout(() => {
+        if (lastHeartbeat > closedAt + 100) {
+          console.log('[ccsm] browser closed but another client is heartbeating · staying alive');
+          return;
+        }
+        gracefulShutdown('browser window closed');
+      }, 12_000);
     });
     console.log('[ccsm] tied to browser window — close it to stop ccsm');
   }

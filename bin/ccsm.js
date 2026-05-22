@@ -174,9 +174,20 @@ function isSameVersion(running) {
     console.error(`ccsm server did not come up in 10s. Check ${LOG}`);
     process.exit(1);
   }
-  console.log(`ccsm started · v${ready.version} · http://localhost:${actualPort}`);
-  if (actualPort !== port) console.log(`(preferred port ${port} was taken)`);
-  console.log(`logs: ${LOG}`);
+  console.log(`ccsm started · v${ready.version}`);
+  console.log(`backend:  http://localhost:${actualPort}${actualPort !== port ? `  (preferred ${port} was taken)` : ''}`);
+  console.log(`frontend: https://bakapiano.github.io/cssm/v1/`);
+  console.log(`logs:     ${LOG}`);
+
+  // First-run hint — printed once, then a marker file makes us quiet.
+  const firstRunMark = path.join(HOME, '.first-run-shown');
+  if (!fs.existsSync(firstRunMark)) {
+    try { fs.writeFileSync(firstRunMark, new Date().toISOString()); } catch {}
+    console.log('');
+    console.log('First run · ccsm is now running in the background.');
+    console.log('Open the frontend URL above, click "Install ccsm" in your browser');
+    console.log('to install it as a PWA so the icon launches directly into the app.');
+  }
 })().catch((err) => {
   console.error('ccsm launcher failed:', err);
   process.exit(1);

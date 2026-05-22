@@ -68,12 +68,14 @@ matchMedia('(display-mode: browser)').addEventListener('change', applyIsAppClass
     clockTick.value = Date.now();
   }, 5000);
 
-  // Heartbeat — safety net for the server's "exit when nobody's around"
-  // logic. The primary mechanism is OS-level (browser child exit), this is
-  // a slow backup. 30s cadence; immediate ping on visibility change so the
-  // server doesn't time out the moment the laptop wakes.
+  // Heartbeat · the server uses this to (a) decide whether to shut down
+  // when its own spawned browser closes (multi-client check), and (b) as
+  // a 90s watchdog backup if the browser-exit signal is missed entirely.
+  // 10s cadence is short enough that any tab open for one full cycle gets
+  // caught by the post-close decision in server.js; long enough not to be
+  // chatty.
   const ping = () => fetch(httpBase() + '/api/heartbeat', { method: 'POST', keepalive: true }).catch(() => {});
   ping();
-  setInterval(ping, 30_000);
+  setInterval(ping, 10_000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) ping(); });
 })();
