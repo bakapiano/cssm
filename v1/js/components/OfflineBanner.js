@@ -1,44 +1,36 @@
-// Shown when the backend probe fails. Tells the user how to start the
-// local ccsm backend — the page itself can't spawn processes (PWA /
-// hosted frontend lives in the browser sandbox), so we just surface the
-// shell command and let the user paste it into a terminal.
+// Shown when the backend probe fails. The hosted frontend (running at
+// https://bakapiano.github.io/cssm/v1/) can't spawn processes directly,
+// so we surface a ccsm://start link instead. Windows / OS will hand that
+// off to the registered protocol handler (ccsm.cmd), which spawns the
+// backend silently. Our health probe picks it up on the next tick and
+// the banner auto-hides.
+//
+// First click triggers a Windows confirmation dialog ("Open ccsm.cmd?").
+// User can check "Always allow" to suppress future prompts.
 
 import { html } from '../html.js';
 import { useEffect, useState } from 'preact/hooks';
 import { serverHealth } from '../state.js';
 import { refreshAll } from '../api.js';
-import { setToast } from '../toast.js';
-
-const CMD = 'ccsm';
 
 export function OfflineBanner() {
   const h = serverHealth.value;
   // "connecting" is the initial transient state — don't flash the banner
   // until we've actually seen offline.
   const offline = h.state === 'offline';
-  const [tried, setTried] = useState(false);
+  const [clicked, setClicked] = useState(false);
 
-  // When backend comes back online after the banner has been shown at
-  // least once, kick a refreshAll so the page state catches up faster
-  // than the next 5s tick.
+  // When backend comes back online after the user tried to launch it,
+  // kick refreshAll so the page state catches up faster than the next
+  // 5s tick.
   useEffect(() => {
-    if (h.state === 'online' && tried) {
+    if (h.state === 'online' && clicked) {
       refreshAll().catch(() => {});
-      setTried(false);
+      setClicked(false);
     }
-  }, [h.state, tried]);
+  }, [h.state, clicked]);
 
   if (!offline) return null;
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(CMD);
-      setToast('copied · paste into a terminal and hit enter');
-      setTried(true);
-    } catch (e) {
-      setToast('clipboard blocked · copy the command manually', 'error');
-    }
-  };
 
   return html`
     <div class="offline-banner">
@@ -47,11 +39,13 @@ export function OfflineBanner() {
         <div class="offline-banner-text">
           <strong>Backend not running.</strong>
           <span class="muted-text">
-            Open a terminal and run <code>${CMD}</code> · the page will auto-reconnect.
+            Click Start to launch · Windows will ask once
+            (check "Always allow" to silence future prompts).
           </span>
         </div>
         <div class="offline-banner-actions">
-          <button class="action primary" onClick=${copy}>Copy command</button>
+          <a class="action primary" href="ccsm://start"
+             onClick=${() => setClicked(true)}>Start ccsm</a>
         </div>
       </div>
     </div>`;
