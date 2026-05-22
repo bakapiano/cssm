@@ -1,0 +1,204 @@
+/* Workspace cards · clone-progress list · pagination · snapshot preview */
+
+.workspace-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--s-3);
+}
+.workspace-card {
+  padding: var(--s-4);
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  border-radius: var(--r-md);
+  transition: border-color .12s, box-shadow .12s;
+}
+.workspace-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow);
+}
+.workspace-card.in-use {
+  background: var(--bg);
+  border-color: var(--ink-faint);
+}
+.workspace-card .ws-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-2);
+  margin-bottom: 4px;
+}
+.workspace-card .ws-name {
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.workspace-card .ws-tag {
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--ink-muted);
+  border: 1px solid var(--border-soft);
+}
+.workspace-card.in-use .ws-tag {
+  background: var(--bg-elev);
+  color: var(--ink-mid);
+  border-color: var(--ink-faint);
+}
+.workspace-card .ws-path {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-muted);
+  word-break: break-all;
+  margin-bottom: var(--s-3);
+}
+.workspace-card .ws-repos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.workspace-card .ws-repo {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--ink-muted);
+  border: 1px solid var(--border-soft);
+}
+.workspace-card .ws-repo.cloned {
+  color: var(--green);
+  background: rgba(74, 138, 74, 0.06);
+  border-color: rgba(74, 138, 74, 0.25);
+}
+
+/* Clone progress — one row per repo, NDJSON-driven by /api/sessions/new */
+.progress-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin-top: var(--s-3);
+}
+.progress-list:empty { display: none; }
+
+.progress-item {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  border-radius: var(--r-sm);
+  padding: var(--s-3) var(--s-4);
+}
+.progress-item .head {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: baseline;
+  gap: var(--s-3);
+  margin-bottom: var(--s-2);
+}
+.progress-item .name {
+  font-family: var(--body);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.progress-item .phase {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-muted);
+  letter-spacing: 0.04em;
+}
+.progress-item .pct {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-mid);
+  font-variant-numeric: tabular-nums;
+}
+.progress-bar {
+  height: 3px;
+  background: var(--border);
+  position: relative;
+  overflow: hidden;
+  border-radius: 2px;
+}
+.progress-bar .fill {
+  height: 100%;
+  width: 0;
+  background: var(--ink);
+  transition: width .2s ease;
+  border-radius: 2px;
+}
+.progress-bar .fill.indeterminate {
+  width: 35% !important;
+  animation: indeterm 1.4s ease-in-out infinite;
+}
+@keyframes indeterm {
+  from { transform: translateX(-110%); }
+  to   { transform: translateX(330%); }
+}
+.progress-item.ok    .fill { background: var(--green); }
+.progress-item.error .fill { background: var(--red); }
+.progress-item .detail {
+  margin-top: 4px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-muted);
+  min-height: 12px;
+}
+
+/* Pagination row — sits below table inside .card-body-flush card */
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-6);
+  border-top: 1px solid var(--border-soft);
+  background: var(--bg);
+  font-size: 12.5px;
+  color: var(--ink-mid);
+  flex-wrap: wrap;
+}
+.pagination-info {
+  flex: 1;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-muted);
+}
+.pagination-info strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+.pagination select {
+  font-size: 11.5px;
+  padding: 4px 24px 4px 8px;
+}
+
+/* Snapshot raw-text preview (collapsible <details>) */
+.snapshot-detail { margin-top: var(--s-4); }
+.snapshot-detail summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--ink-mid);
+  padding: var(--s-2) 0;
+  user-select: none;
+  font-weight: 500;
+}
+.snapshot-detail summary::marker { color: var(--ink-mid); }
+.snapshot-detail summary:hover { color: var(--ink); }
+.preview {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-mid);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: var(--s-3);
+  margin-top: var(--s-2);
+  max-height: 280px;
+  overflow: auto;
+  white-space: pre;
+  line-height: 1.55;
+}

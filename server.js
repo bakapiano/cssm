@@ -48,6 +48,40 @@ const app = express();
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Dev hot-reload — only when running from a checkout, not from an installed
+// npm package. Watches public/ and pushes an SSE "reload" event so the
+// browser reloads on every file save. CCSM_NO_DEV=1 disables it explicitly.
+const IS_DEV = !__dirname.includes(`${path.sep}node_modules${path.sep}`) && process.env.CCSM_NO_DEV !== '1';
+const reloadClients = new Set();
+if (IS_DEV) {
+  app.get('/api/dev/ping', (_req, res) => res.json({ dev: true }));
+  app.get('/api/dev/reload', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+    res.write(': connected\n\n');
+    reloadClients.add(res);
+    // Heartbeat every 25s so intermediate proxies don't kill the stream.
+    const hb = setInterval(() => { try { res.write(': ping\n\n'); } catch {} }, 25000);
+    req.on('close', () => { clearInterval(hb); reloadClients.delete(res); });
+  });
+  const publicDir = path.join(__dirname, 'public');
+  const fs = require('node:fs');
+  let debounce = null;
+  fs.watch(publicDir, { recursive: true }, (_event, filename) => {
+    clearTimeout(debounce);
+    debounce = setTimeout(() => {
+      if (reloadClients.size === 0) return;
+      console.log(`[dev] reload · ${filename || '?'} → ${reloadClients.size} client(s)`);
+      for (const r of reloadClients) {
+        try { r.write(`event: reload\ndata: ${Date.now()}\n\n`); } catch {}
+      }
+    }, 80);
+  });
+  console.log('[dev] hot-reload watching public/');
+}
+
 function asyncH(fn) {
   return (req, res) => {
     Promise.resolve(fn(req, res)).catch((err) => {
