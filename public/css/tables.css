@@ -97,7 +97,10 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* Status indicator dot — claude-like */
+/* Status indicator dot — claude-like. Base color is the muted gray so any
+   unrecognized status string Claude writes ("compacting", "thinking", a
+   transient state, etc.) falls back to "unknown-looking" rather than a
+   stark black dot. .busy / .idle override. */
 .status-mark {
   display: inline-block;
   width: 8px;
@@ -106,18 +109,19 @@
   background: currentColor;
   vertical-align: middle;
   position: relative;
+  color: var(--ink-faint);
 }
 .status-mark.busy {
-  color: var(--yellow);
+  color: var(--blue);
   box-shadow: 0 0 0 0 currentColor;
   animation: pulse 1.5s ease-in-out infinite;
 }
 .status-mark.idle    { color: var(--green); }
 .status-mark.unknown { color: var(--ink-faint); }
 @keyframes pulse {
-  0%   { box-shadow: 0 0 0 0 rgba(196, 137, 43, 0.4); }
-  70%  { box-shadow: 0 0 0 7px rgba(196, 137, 43, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(196, 137, 43, 0); }
+  0%   { box-shadow: 0 0 0 0 rgba(74, 115, 165, 0.4); }
+  70%  { box-shadow: 0 0 0 7px rgba(74, 115, 165, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(74, 115, 165, 0); }
 }
 
 /* Title and path are fixed-width with overflow ellipsis on the inner
@@ -212,11 +216,11 @@
 }
 .data tbody tr:hover .star-btn { color: var(--ink-mid); }
 .star-btn:hover {
-  color: var(--yellow) !important;
+  color: #e3b341 !important;
   background: var(--bg);
 }
 .star-btn:active { transform: scale(0.88); }
-.star-btn.is-fav { color: var(--yellow); }
+.star-btn.is-fav { color: #e3b341; }
 .star-btn svg { display: block; }
 
 /* Rename (pencil) — only visible on row hover so it doesn't compete with
