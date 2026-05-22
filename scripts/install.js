@@ -104,8 +104,29 @@ try {
   registerProtocol(vbsPath);
   log(`launcher · ${vbsPath}`);
   log(`ccsm:// protocol registered (silent · via wscript.exe)`);
-  log('open https://bakapiano.github.io/cssm/v1/ and click "Start ccsm" on the offline banner to launch the backend.');
 } catch (e) {
   warn(`failed · ${e.message}`);
   warn('the hosted frontend\'s "Start ccsm" button will not be able to launch the backend. You can still run `ccsm` manually in a terminal.');
+}
+
+// Auto-launch ccsm after install so the user lands directly in the app
+// without needing a second command. Detached + windowsHide so the npm
+// install command returns immediately. Skip if CCSM_NO_AUTOLAUNCH=1 is
+// set (CI, headless setups).
+if (process.env.CCSM_NO_AUTOLAUNCH !== '1') {
+  try {
+    const { spawn } = require('node:child_process');
+    const child = spawn(ccsmCmd, [], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+      shell: false,
+    });
+    child.unref();
+    log('launching ccsm now · check for the chromeless window');
+    log('(set CCSM_NO_AUTOLAUNCH=1 to skip this on future installs)');
+  } catch (e) {
+    warn(`auto-launch failed · ${e.message}`);
+    warn('run `ccsm` manually to start.');
+  }
 }
