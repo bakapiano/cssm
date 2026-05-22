@@ -1,15 +1,50 @@
 import { html } from '../html.js';
-import { serverHealth } from '../state.js';
+import { serverHealth, installPrompt, isInstalledPwa } from '../state.js';
+import { setToast } from '../toast.js';
 import { Card } from '../components/Card.js';
 import { BrandMark, IconGithub, IconExternal } from '../icons.js';
 
 const REPO_URL = 'https://github.com/bakapiano/cssm';
 const NPM_URL  = 'https://www.npmjs.com/package/@bakapiano/ccsm';
 
+async function onInstall() {
+  const ev = installPrompt.value;
+  if (!ev) return setToast('install prompt not available right now · try opening this URL in a regular Edge tab', 'error');
+  ev.prompt();
+  const { outcome } = await ev.userChoice;
+  installPrompt.value = null;
+  if (outcome === 'accepted') {
+    setToast('installed · close + relaunch via npx ccsm to enable Window Controls Overlay');
+  }
+}
+
+function InstallCard() {
+  if (isInstalledPwa.value) return null;
+  const canPrompt = !!installPrompt.value;
+  return html`
+    <${Card} title="Install as app">
+      <p class="about-copy" style="margin-bottom: var(--s-3);">
+        ccsm runs best as a Chromium PWA — title bar collapses into the page (Window Controls Overlay),
+        and the launch shortcut becomes a standalone app. One-click install on supported browsers below.
+      </p>
+      <div class="about-links">
+        <button class="action ${canPrompt ? 'primary' : 'subtle'}" onClick=${onInstall} disabled=${!canPrompt}>
+          ${canPrompt ? 'Install ccsm' : 'Install not available'}
+        </button>
+      </div>
+      ${!canPrompt ? html`
+        <p class="muted-text" style="margin-top: var(--s-3);">
+          If the button stays disabled: open <code>http://localhost:7777</code> in a regular Edge tab,
+          click the address-bar install icon (⊕), then re-launch via <code>npx ccsm</code>.
+        </p>` : null}
+    </${Card}>`;
+}
+
 export function AboutPage() {
   const version = serverHealth.value.version;
 
   return html`
+    <${InstallCard} />
     <${Card} title="ccsm">
       <div class="about-block">
         <div class="about-hero">

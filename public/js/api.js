@@ -1,11 +1,13 @@
 // Fetch wrapper + every loader. Loaders push into signals from ./state.js.
+// Cross-origin (hosted frontend → local backend) flows through httpBase().
 
 import * as S from './state.js';
+import { httpBase } from './backend.js';
 
 export async function api(method, url, body) {
   const opts = { method, headers: { 'Content-Type': 'application/json' } };
   if (body !== undefined) opts.body = JSON.stringify(body);
-  const r = await fetch(url, opts);
+  const r = await fetch(httpBase() + url, opts);
   const text = await r.text();
   let json;
   try { json = text ? JSON.parse(text) : {}; } catch { json = { raw: text }; }
@@ -14,12 +16,26 @@ export async function api(method, url, body) {
 }
 
 export async function loadConfig() {
-  const [cfg, terms] = await Promise.all([
+  const [cfg, terms, caps] = await Promise.all([
     api('GET', '/api/config'),
     api('GET', '/api/terminals'),
+    api('GET', '/api/capabilities').catch(() => ({ webTerminal: false })),
   ]);
   S.config.value = cfg;
   S.terminals.value = terms.terminals;
+  S.capabilities.value = caps;
+}
+
+export async function loadWebTerminals() {
+  try {
+    const r = await api('GET', '/api/sessions/web');
+    S.webTerminals.value = r.terminals || [];
+  } catch { /* node-pty might be unavailable */ }
+}
+
+export async function killWebTerminal(id) {
+  await api('DELETE', `/api/sessions/web/${id}`);
+  await loadWebTerminals();
 }
 
 export async function loadSessions() {
@@ -66,7 +82,7 @@ export async function loadWorkspaces() {
 export async function refreshAll() {
   await Promise.all([
     loadSessions(), loadRecent(), loadSnapshot(),
-    loadWorkspaces(), loadFavorites(), loadLabels(),
+    loadWorkspaces(), loadFavorites(), loadLabels(), loadWebTerminals(),
   ]);
   S.lastRefreshAt.value = Date.now();
 }
@@ -75,7 +91,7 @@ export async function pollHealth() {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 3000);
   try {
-    const r = await fetch('/api/health', { signal: ctrl.signal });
+    const r = await fetch(httpBase() + '/api/health', { signal: ctrl.signal });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const j = await r.json();
     S.serverHealth.value = { state: 'online', version: j.version, pid: j.pid };

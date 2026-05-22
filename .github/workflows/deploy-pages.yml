@@ -1,0 +1,43 @@
+name: Deploy frontend to GitHub Pages
+
+# Publish public/ to gh-pages branch under /v1/ on every change to public/
+# on the main branch. `keep_files: true` so other version directories
+# (future /v2/, /v3/) stay intact.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'public/**'
+      - '.github/workflows/deploy-pages.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stage public/ under v1/
+        run: |
+          mkdir -p out/v1
+          cp -r public/. out/v1/
+
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./out
+          keep_files: true
+          force_orphan: false
+          user_name: 'github-actions[bot]'
+          user_email: 'github-actions[bot]@users.noreply.github.com'
+          commit_message: 'deploy v1 · ${{ github.sha }}'

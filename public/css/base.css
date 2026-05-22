@@ -3,6 +3,12 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 [hidden] { display: none !important; }
 
+html {
+  /* Reserve the scrollbar lane so the layout never shifts horizontally
+     when content grows past one viewport. Both columns of scroll-gutter
+     stay symmetric (Firefox/Chromium both honor this). */
+  scrollbar-gutter: stable;
+}
 html, body {
   background: var(--bg);
   color: var(--ink);
@@ -27,10 +33,24 @@ code, .kbd {
   color: var(--ink-mid);
 }
 
-::-webkit-scrollbar { width: 10px; height: 10px; }
+/* Fixed scrollbar look so it doesn't fade in/out or shift width on focus.
+   WebKit (Edge/Chrome): pseudo-elements. Firefox: scrollbar-* properties. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+::-webkit-scrollbar { width: 10px; height: 10px; background: transparent; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 8px; border: 2px solid var(--bg); }
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 8px;
+  border: 2px solid var(--bg);
+  /* Forced minimum height so dragging the thumb is always practical even on
+     very long pages. */
+  min-height: 32px;
+}
 ::-webkit-scrollbar-thumb:hover { background: var(--ink-faint); }
+::-webkit-scrollbar-corner { background: transparent; }
 
 .row { display: flex; align-items: center; }
 .gap-row { gap: var(--s-3); flex-wrap: wrap; }

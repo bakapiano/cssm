@@ -1,0 +1,70 @@
+/* PWA / --app= window drag regions.
+ *
+ * `-webkit-app-region: drag` is a Chromium-only property; it has effect in
+ * Electron, installed PWA windows, AND in `--app=` chromeless mode where
+ * the manifest's display_override unlocks WCO-ish behaviour. In a plain
+ * browser tab it's silently ignored. We therefore apply it *unconditionally*
+ * (no `@media (display-mode: …)` gate) so any surface that does honour it
+ * gets the drag handles — particularly the case where Edge `--app=` reads
+ * our manifest, hides its own OS title bar, but still reports
+ * display-mode: browser. Without unconditional rules, that window has
+ * neither a native title bar to grab NOR app-region drag → undraggable.
+ */
+
+.sidebar-brand,
+.page-head,
+.page-head-inner,
+.page-title,
+.page-subtitle {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+/* Any interactive element opts out of drag so click / focus / scroll
+   still reach the page. */
+button, a, input, select, textarea, label,
+.nav-item, .util-item, .collapse-toggle,
+.action, .server-status,
+.star-btn, .rename-btn, .card-fold, .modal-close,
+.chip, .radio, .fab,
+.ph-stat, .ph-divider {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+/* `user-select: none` on the drag-target text is needed so clicking the
+   page title doesn't start a text selection instead of a window drag. But
+   we only want this in PWA-like contexts — in a regular browser tab the
+   user should still be able to select the title text. Runtime JS adds
+   `body.is-app` when not in display-mode:browser; see main.js. */
+body.is-app .sidebar-brand,
+body.is-app .page-head,
+body.is-app .page-head-inner,
+body.is-app .page-title,
+body.is-app .page-subtitle {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* In an app window, .main and .sidebar's own top padding is "blank space"
+   that has no drag region — clicking the topmost 32px does nothing. Move
+   that padding into the draggable child elements (.sidebar-brand and
+   .page-head) so the windowtop is grabbable all the way to y=0. Visually
+   nothing shifts; behaviourally the OS-title-bar zone now responds. */
+body.is-app .sidebar { padding-top: 0; }
+body.is-app .main    { padding-top: 0; }
+body.is-app .sidebar-brand {
+  padding-top: calc(var(--s-4) + var(--s-4)); /* 32px = old sidebar.pt + old brand.pt */
+}
+body.is-app .page-head {
+  padding-top: var(--s-8); /* 32px = old main.pt */
+}
+
+/* WCO-only · the OS title bar is fully gone, so right-pad the page-head
+   so the meta cluster doesn't slide under the floating close/max/min
+   controls. `.main`'s own 32px top padding already clears their height. */
+@media (display-mode: window-controls-overlay) {
+  .page-head {
+    padding-right: calc(var(--s-10) + 100vw - env(titlebar-area-width, 100vw));
+  }
+}

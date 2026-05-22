@@ -75,6 +75,12 @@ export const IconMonitor = ic('0 0 24 24', html`
   <line x1="12" y1="16" x2="12" y2="20"/>
 `, 13);
 
+// "> _" terminal prompt — for the Terminals nav tab
+export const IconTerminal = ic('0 0 24 24', html`
+  <polyline points="4 17 10 11 4 5"/>
+  <line x1="12" y1="19" x2="20" y2="19"/>
+`, 18);
+
 // Two variants used in the StarButton.
 export const StarOutline = ({ size = 15 } = {}) => html`
   <svg viewBox="0 0 24 24" width=${size} height=${size} fill="none" stroke="currentColor"
@@ -97,7 +103,7 @@ export const StarSmallFilled = ({ size = 14 } = {}) => html`
 // brand mark (terminal window + ccsm text — matches /favicon.svg)
 export const BrandMark = () => html`
   <svg viewBox="0 0 32 32" width="32" height="32">
-    <rect x="2" y="4" width="28" height="24" rx="3" fill="#c45f3f"/>
+    <rect x="2" y="4" width="28" height="24" rx="3" fill="#1a1815"/>
     <line x1="2" y1="10" x2="30" y2="10" stroke="#faf9f5" stroke-width="0.6" opacity="0.45"/>
     <circle cx="6"   cy="7" r="1" fill="#faf9f5"/>
     <circle cx="9.5" cy="7" r="1" fill="#faf9f5" opacity="0.65"/>

@@ -2,6 +2,7 @@
 // Items live in a signal keyed by repo so progress rows are reactive.
 
 import { signal } from '@preact/signals';
+import { httpBase } from './backend.js';
 
 // progressByContext[rootId] = { repoName: { phase, percent, detail, state, indeterminate, name } }
 export const progressByContext = signal({});
@@ -59,7 +60,7 @@ function applyEvent(ev, rootId) {
 // onMeta(event) is called for workspace/launched/done events so the caller can
 // surface them in their own result text area.
 export async function streamNewSession(body, { progressRootId = 'newSessionProgress', onMeta } = {}) {
-  const res = await fetch('/api/sessions/new', {
+  const res = await fetch(httpBase() + '/api/sessions/new', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),

@@ -1,10 +1,10 @@
 import { html } from '../html.js';
 import {
-  activeTab, sidebarCollapsed, configDirty, sessions,
+  activeTab, sidebarCollapsed, configDirty, sessions, webTerminals, capabilities,
   selectTab, toggleSidebar,
 } from '../state.js';
 import {
-  IconSessions, IconLaunch, IconConfigure, IconInfo,
+  IconSessions, IconLaunch, IconTerminal, IconConfigure, IconInfo,
   IconChevronLeft, BrandMark,
 } from '../icons.js';
 
@@ -33,6 +33,9 @@ export function Sidebar() {
       <nav class="sidebar-nav" role="tablist" aria-label="Sections">
         <${NavItem} tab="sessions"  icon=${html`<${IconSessions} />`}  label="Sessions"  badge=${sessions.value.length} />
         <${NavItem} tab="launch"    icon=${html`<${IconLaunch} />`}    label="Launch" />
+        ${capabilities.value.webTerminal ? html`
+          <${NavItem} tab="terminals" icon=${html`<${IconTerminal} />`} label="Terminals" badge=${webTerminals.value.length || null} />
+        ` : null}
         <${NavItem} tab="configure" icon=${html`<${IconConfigure} />`} label="Configure" dirty=${configDirty.value} />
         <${NavItem} tab="about"     icon=${html`<${IconInfo} />`}      label="About" />
       </nav>

@@ -6,7 +6,10 @@ import { signal, computed } from '@preact/signals';
 // ── server-driven data ──────────────────────────────────────────
 export const config       = signal(null);
 export const terminals    = signal([]);
+export const capabilities = signal({ webTerminal: false });
 export const sessions     = signal([]);
+export const webTerminals = signal([]);          // active in-page PTY sessions
+export const activeTerminalId = signal(null);    // which one's open in the right pane
 export const recent       = signal([]);
 export const recentTotal  = signal(0);
 export const favorites    = signal({});   // { sessionId: {sessionId, cwd, title, gitBranch, addedAt} }
@@ -25,6 +28,8 @@ export const configDirty      = signal(false);
 export const modalOpen        = signal(false);
 export const clockTick        = signal(Date.now());      // re-ticked each second so fmtAgo refreshes
 export const lastRefreshAt    = signal(0);               // ms timestamp of last successful refreshAll()
+export const installPrompt    = signal(null);            // captured beforeinstallprompt event (PWA install)
+export const isInstalledPwa   = signal(false);           // running inside an installed PWA window (display-mode: standalone+)
 
 // ── pagination ──────────────────────────────────────────────────
 export const sessionsOffset  = signal(0);
@@ -42,6 +47,7 @@ export const favoritesList = computed(() =>
 export const TAB_HEADINGS = {
   sessions:  { title: 'Sessions',  subtitle: 'Live and recently-closed Claude Code sessions on this machine.' },
   launch:    { title: 'Launch',    subtitle: 'Spin up a new session in a fresh workspace, or restore from snapshot.' },
+  terminals: { title: 'Terminals', subtitle: 'Claude sessions running in this page.' },
   configure: { title: 'Configure', subtitle: 'Persisted to ~/.ccsm/config.json.' },
   about:     { title: 'About',     subtitle: 'ccsm — Claude Code Session Manager.' },
 };

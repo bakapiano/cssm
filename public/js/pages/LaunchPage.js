@@ -1,7 +1,8 @@
 import { html } from '../html.js';
 import { useState } from 'preact/hooks';
 import { signal } from '@preact/signals';
-import { loadWorkspaces } from '../api.js';
+import { capabilities, activeTerminalId, selectTab } from '../state.js';
+import { loadWorkspaces, loadWebTerminals } from '../api.js';
 import { setToast } from '../toast.js';
 import { streamNewSession, resetProgress } from '../streaming.js';
 import { Card } from '../components/Card.js';
@@ -16,6 +17,10 @@ const inlineSelected = signal(new Set());
 
 function NewSessionCard() {
   const [workspace, setWorkspace] = useState('');
+  // 'web' = run inside this page (in-process PTY · bridges to xterm.js)
+  // 'wt'  = open a new Windows Terminal window
+  const initialMode = capabilities.value.webTerminal ? 'web' : 'wt';
+  const [terminal, setTerminal] = useState(initialMode);
   const [result, setResult] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -27,14 +32,19 @@ function NewSessionCard() {
     resetProgress(repos, ROOT_ID);
     try {
       const final = await streamNewSession(
-        { repos, workspace: workspace || undefined },
+        { repos, workspace: workspace || undefined, terminal },
         {
           progressRootId: ROOT_ID,
           onMeta: (ev) => {
             if (ev.type === 'workspace') {
               setResult(`workspace: ${ev.workspace.path}${ev.created ? ' · newly created' : ''}`);
             } else if (ev.type === 'launched') {
-              setResult(`terminal launching · pid ${ev.launched.pid} · ${ev.launched.terminal}`);
+              const l = ev.launched || {};
+              if (l.mode === 'web') {
+                setResult(`web terminal launched · pid ${l.pid} · id ${l.id}`);
+              } else {
+                setResult(`terminal launching · pid ${l.pid} · ${l.terminal}`);
+              }
             }
           },
         },
@@ -43,6 +53,12 @@ function NewSessionCard() {
         const summary = (final.cloneResults || []).map((c) => `${c.repo}: ${c.action || c.error}`).join(' · ');
         setResult(`launched in ${final.workspace.path}${final.created ? ' · newly created' : ''} — ${summary}`);
         setToast(`launched · ${final.workspace.name}`);
+        // For web mode, hop to the Terminals tab and open the new session.
+        if (terminal === 'web' && final.launched?.id) {
+          activeTerminalId.value = final.launched.id;
+          await loadWebTerminals();
+          selectTab('terminals');
+        }
       } else {
         setResult(`error: ${final.error}`);
         setToast(final.error || 'new session failed', 'error');
@@ -63,6 +79,22 @@ function NewSessionCard() {
         <span class="form-label">Repos</span>
         <${RepoPicker} selectedSig=${inlineSelected} />
       </div>
+      ${capabilities.value.webTerminal ? html`
+        <div class="form-row">
+          <span class="form-label">Open in</span>
+          <div class="radio-row">
+            <label class=${`radio${terminal === 'web' ? ' is-checked' : ''}`}>
+              <input type="radio" name="terminal" value="web"
+                     checked=${terminal === 'web'} onChange=${() => setTerminal('web')} />
+              this page
+            </label>
+            <label class=${`radio${terminal === 'wt' ? ' is-checked' : ''}`}>
+              <input type="radio" name="terminal" value="wt"
+                     checked=${terminal === 'wt'} onChange=${() => setTerminal('wt')} />
+              wt window
+            </label>
+          </div>
+        </div>` : null}
       <div class="form-row">
         <label class="form-label">Workspace</label>
         <${WorkspacePicker} value=${workspace} onChange=${setWorkspace} />

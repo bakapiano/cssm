@@ -32,6 +32,35 @@ const {
   snapshotWindowsOf,
   focusNewlyOpenedHwnd,
 } = require('./lib/focus');
+const webTerminal = require('./lib/webTerminal');
+
+// One unified exit path so every reason-for-shutdown gets the same
+// cleanup: final snapshot save (so the next launch can restore current
+// state) + PTY children killed. Idempotent — concurrent triggers are no-ops.
+let shuttingDown = false;
+async function gracefulShutdown(reason) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[ccsm] shutting down · ${reason}`);
+
+  // Final snapshot. Wrap in a race so a wedged disk doesn't hang us
+  // indefinitely — 2s is generous (typical save is <300ms).
+  try {
+    const cfg = await loadConfig();
+    await Promise.race([
+      saveSnapshot({ keep: cfg.snapshotHistoryKeep }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('save timeout (2s)')), 2000)),
+    ]);
+    console.log('[ccsm] final snapshot saved');
+  } catch (e) {
+    console.error('[ccsm] final snapshot skipped:', e.message);
+  }
+
+  // Kill any in-process PTY children so they don't outlive us.
+  try { webTerminal.killAll(); } catch {}
+
+  process.exit(0);
+}
 
 async function autoFocusAfterLaunch({ terminal, beforeHwnds, autoFocus }) {
   if (!autoFocus) return;
@@ -46,6 +75,27 @@ async function autoFocusAfterLaunch({ terminal, beforeHwnds, autoFocus }) {
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
+
+// CORS · allow the hosted-frontend (GH Pages) origin to call /api/* and
+// open WebSockets. Listed explicitly — never reflect Origin or use '*' so
+// random web pages can't reach the local backend. Localhost dev calls
+// stay same-origin (browser doesn't add Origin header → middleware is a
+// no-op for them).
+const ALLOWED_ORIGINS = new Set([
+  'https://bakapiano.github.io',
+]);
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && ALLOWED_ORIGINS.has(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Vary', 'Origin');
+  }
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Dev hot-reload — only when running from a checkout, not from an installed
@@ -317,22 +367,48 @@ app.post('/api/sessions/new', async (req, res) => {
     const shouldLaunch = req.body && req.body.launch !== false;
     let launched = null;
     if (shouldLaunch) {
-      const beforeHwnds = await snapshotWindowsOf(
-        processNameFor(cfg.terminal) || 'WindowsTerminal.exe'
-      );
-      launched = launchNewClaude({
-        cwd: workspace.path,
-        title: workspace.name,
-        terminal: cfg.terminal,
-        claudeCommand: cfg.claudeCommand,
-      commandShell: cfg.commandShell || "pwsh",
-      });
-      emit({ type: 'launched', launched });
-      autoFocusAfterLaunch({
-        terminal: cfg.terminal,
-        beforeHwnds,
-        autoFocus: cfg.autoFocusOnLaunch !== false,
-      });
+      // mode = 'web' → spawn the claude command as an in-process PTY whose
+      //                stdio is bridged to xterm.js via WebSocket. The session
+      //                lives in webTerminal's pool until killed or claude
+      //                exits. No wt window opens.
+      // mode = 'wt' (default) → existing behaviour: launch via wt window.
+      const mode = req.body && req.body.terminal === 'web' ? 'web' : 'wt';
+
+      if (mode === 'web') {
+        if (!webTerminal.available) {
+          return fail('node-pty is not installed · web terminal mode unavailable');
+        }
+        // Wrap in pwsh so config.claudeCommand can be an alias / function
+        // defined in the user's profile (e.g. `cc`), same trick wt uses.
+        const cmd = cfg.claudeCommand || 'claude';
+        const wrap = (cfg.commandShell || 'pwsh') === 'powershell' ? 'powershell.exe' : 'pwsh.exe';
+        const entry = webTerminal.spawn({
+          command: wrap,
+          args: ['-NoExit', '-NoLogo', '-Command', `Set-Location -LiteralPath '${workspace.path.replace(/'/g, "''")}'; & '${cmd.replace(/'/g, "''")}'`],
+          cwd: workspace.path,
+          meta: { title: workspace.name, workspace: workspace.name, cwd: workspace.path },
+        });
+        launched = { mode: 'web', id: entry.id, pid: entry.meta.pid, terminal: 'web' };
+        emit({ type: 'launched', launched });
+      } else {
+        const beforeHwnds = await snapshotWindowsOf(
+          processNameFor(cfg.terminal) || 'WindowsTerminal.exe'
+        );
+        launched = launchNewClaude({
+          cwd: workspace.path,
+          title: workspace.name,
+          terminal: cfg.terminal,
+          claudeCommand: cfg.claudeCommand,
+          commandShell: cfg.commandShell || 'pwsh',
+        });
+        launched = { mode: 'wt', ...launched };
+        emit({ type: 'launched', launched });
+        autoFocusAfterLaunch({
+          terminal: cfg.terminal,
+          beforeHwnds,
+          autoFocus: cfg.autoFocusOnLaunch !== false,
+        });
+      }
     }
 
     emit({
@@ -412,6 +488,24 @@ app.post('/api/sessions/:sessionId/focus', asyncH(async (req, res) => {
 // ---- terminal kinds ----
 app.get('/api/terminals', (_req, res) => res.json({ terminals: listTerminalKinds() }));
 
+// ---- capabilities probe · used by the frontend to decide whether to show
+// the "open in this page" radio option. node-pty is optional, install-failure
+// degrades us to wt-only. ----
+app.get('/api/capabilities', (_req, res) => res.json({
+  webTerminal: webTerminal.available,
+  webTerminalError: webTerminal.available ? null : String(webTerminal.loadError?.message || 'unavailable'),
+}));
+
+// ---- web terminals · list / kill ----
+// (creation happens through /api/sessions/new with terminal:'web'; attach is
+// over WebSocket below.)
+app.get('/api/sessions/web', (_req, res) => res.json({ terminals: webTerminal.list() }));
+
+app.delete('/api/sessions/web/:id', (req, res) => {
+  const ok = webTerminal.kill(req.params.id);
+  res.json({ killed: ok });
+});
+
 // ---- health ----
 const pkg = require('./package.json');
 app.get('/api/health', (_req, res) => res.json({ ok: true, pid: process.pid, version: pkg.version, name: pkg.name }));
@@ -438,6 +532,15 @@ app.post('/api/spawn-browser', asyncH(async (_req, res) => {
   openInBrowser(`http://localhost:${currentPort}`, mode);
   res.json({ ok: true, mode });
 }));
+
+// Graceful shutdown · the uninstall script and the auto-upgrade path in
+// the launcher both call this. We reply first so the caller doesn't see
+// a torn connection, then exit on the next tick.
+app.post('/api/shutdown', (_req, res) => {
+  res.json({ ok: true, bye: 'shutting down' });
+  // setImmediate so the response flushes before we tear the server down.
+  setImmediate(() => gracefulShutdown('/api/shutdown'));
+});
 
 // ---- auto-snapshot scheduler ----
 let snapshotTimer = null;
@@ -535,14 +638,54 @@ function openInBrowser(url, mode) {
 
 (async () => {
   const cfg = await loadConfig();
-  const { port } = await listenWithFallback(cfg.port);
+  const { server, port } = await listenWithFallback(cfg.port);
   currentPort = port;
+
+  // WebSocket upgrade for /ws/terminal/:id → bridges xterm.js to a PTY
+  // entry in webTerminal's pool. Only enabled when node-pty loaded; the
+  // /api/capabilities endpoint advertises this to the frontend.
+  if (webTerminal.available) {
+    let WebSocketServer;
+    try { ({ WebSocketServer } = require('ws')); } catch {}
+    if (WebSocketServer) {
+      const wss = new WebSocketServer({ noServer: true });
+      server.on('upgrade', (req, socket, head) => {
+        // Origin check · same allow-list as REST CORS. Browsers always
+        // send Origin on WebSocket upgrades; missing Origin = non-browser
+        // client which we tolerate (curl etc).
+        const origin = req.headers.origin;
+        if (origin && !ALLOWED_ORIGINS.has(origin) && !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) {
+          socket.destroy();
+          return;
+        }
+        const m = req.url && req.url.match(/^\/ws\/terminal\/([^\/?#]+)/);
+        if (!m) { socket.destroy(); return; }
+        const id = decodeURIComponent(m[1]);
+        wss.handleUpgrade(req, socket, head, (ws) => webTerminal.attach(id, ws));
+      });
+      console.log('[ccsm] web terminal bridge active (WebSocket /ws/terminal/:id)');
+    }
+  }
+
+  // OS signals · run a graceful shutdown (which saves a final snapshot
+  // and kills PTY children) before exiting.
+  for (const sig of ['SIGINT', 'SIGTERM']) {
+    process.on(sig, () => gracefulShutdown(sig));
+  }
+  // Last-resort cleanup on sync exit (process.on('exit') can't await
+  // anything, so it's only a safety net for PTY children).
+  process.on('exit', () => { try { webTerminal.killAll(); } catch {} });
   const url = `http://localhost:${port}`;
   console.log(`ccsm listening on ${url}${port !== cfg.port ? `  (requested ${cfg.port}, was taken)` : ''}`);
   console.log(`data dir:        ${DATA_DIR}`);
   console.log(`work dir:        ${cfg.workDir}`);
   console.log(`terminal:        ${cfg.terminal} · ${cfg.claudeCommand}${cfg.terminal === 'wt' ? ` (via ${cfg.commandShell})` : ''}`);
-  const mode = cfg.browserMode || (cfg.autoOpenBrowser === false ? 'none' : 'app');
+  // CCSM_NO_BROWSER=1 (set by the launcher when responding to a ccsm://
+  // protocol click) suppresses the auto-spawned browser window — the
+  // caller already has one open and just needs the backend to come up.
+  const mode = process.env.CCSM_NO_BROWSER === '1'
+    ? 'none'
+    : (cfg.browserMode || (cfg.autoOpenBrowser === false ? 'none' : 'app'));
   const opened = openInBrowser(url, mode);
 
   // Primary lifecycle: tie this server's lifetime to the chromeless
@@ -551,10 +694,7 @@ function openInBrowser(url, mode) {
   // the spawned child handle we hold here fires 'exit'. Skip if the user
   // explicitly asked the server to stay alive (e.g. an automation host).
   if (opened.kind === 'app' && opened.child && process.env.CCSM_KEEP_ALIVE !== '1') {
-    opened.child.on('exit', () => {
-      console.log('[ccsm] browser window closed · shutting down');
-      process.exit(0);
-    });
+    opened.child.on('exit', () => gracefulShutdown('browser window closed'));
     console.log('[ccsm] tied to browser window — close it to stop ccsm');
   }
 
@@ -569,8 +709,7 @@ function openInBrowser(url, mode) {
     setInterval(() => {
       if (!heartbeatSeen) return;
       if (Date.now() - lastHeartbeat > HEARTBEAT_TIMEOUT_MS) {
-        console.log(`[ccsm] no heartbeat for ${HEARTBEAT_TIMEOUT_MS / 1000}s · shutting down`);
-        process.exit(0);
+        gracefulShutdown(`no heartbeat for ${HEARTBEAT_TIMEOUT_MS / 1000}s`);
       }
     }, 30_000);
     console.log('[ccsm] heartbeat watchdog active');
