@@ -13,7 +13,6 @@ function log(msg)  { process.stdout.write(`[ccsm uninstall] ${msg}\n`); }
 function warn(msg) { process.stderr.write(`[ccsm uninstall] ${msg}\n`); }
 
 if (process.platform !== 'win32') process.exit(0);
-if (process.env.npm_config_global !== 'true') process.exit(0);
 
 function shutdownIfRunning() {
   return new Promise((resolve) => {

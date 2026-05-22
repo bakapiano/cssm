@@ -22,10 +22,12 @@ if (process.platform !== 'win32') {
   log('non-Windows · skipping ccsm:// registration');
   process.exit(0);
 }
-if (process.env.npm_config_global !== 'true') {
-  log('not a global install · skipping');
-  process.exit(0);
-}
+// Note: we DO register on npx-cache installs too (not just global). The
+// npx cache path is stable across re-runs of the same package, and even
+// if the user later cleans the cache, the only consequence is the
+// OfflineBanner button no-ops — nothing actively broken. Registering
+// always means a first-time `npx @bakapiano/ccsm` gets the full "click
+// to wake" UX without needing a separate `npm i -g`.
 
 function findCcsmCmd() {
   const prefix = process.env.npm_config_prefix
