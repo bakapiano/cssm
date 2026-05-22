@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Bleeds the cream surface into the Edge/Chrome --app= title bar
+         so it visually disappears against the body. The browser does
+         honor this in standalone app windows. -->
+    <meta name="theme-color" content="#faf9f5" />
+    <meta name="color-scheme" content="light" />
+    <title>CCSM — Claude CLI Sessions Manager</title>
+    <!-- All asset paths are RELATIVE so the same index.html works when
+         served from localhost:7777/ (backend bundle) AND from
+         https://bakapiano.github.io/cssm/v1/ (GH Pages hosted). -->
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@300..700&family=JetBrains+Mono:wght@400..600&display=swap"
+    />
+    <link rel="stylesheet" href="./css/tokens.css" />
+    <link rel="stylesheet" href="./css/base.css" />
+    <link rel="stylesheet" href="./css/layout.css" />
+    <link rel="stylesheet" href="./css/sidebar.css" />
+    <link rel="stylesheet" href="./css/cards.css" />
+    <link rel="stylesheet" href="./css/tables.css" />
+    <link rel="stylesheet" href="./css/forms.css" />
+    <link rel="stylesheet" href="./css/widgets.css" />
+    <link rel="stylesheet" href="./css/feedback.css" />
+    <link rel="stylesheet" href="./css/modal.css" />
+    <link rel="stylesheet" href="./css/terminals.css" />
+    <link rel="stylesheet" href="./css/wco.css" />
+    <link rel="stylesheet" href="./css/responsive.css" />
+
+    <script type="importmap">
+      {
+        "imports": {
+          "preact":             "https://esm.sh/preact@10.27.0",
+          "preact/hooks":       "https://esm.sh/preact@10.27.0/hooks",
+          "@preact/signals":    "https://esm.sh/@preact/signals@1.3.2?deps=preact@10.27.0",
+          "htm":                "https://esm.sh/htm@3.1.1",
+          "@xterm/xterm":       "https://esm.sh/@xterm/xterm@5.5.0",
+          "@xterm/addon-fit":   "https://esm.sh/@xterm/addon-fit@0.10.0?deps=@xterm/xterm@5.5.0",
+          "@xterm/addon-web-links": "https://esm.sh/@xterm/addon-web-links@0.11.0?deps=@xterm/xterm@5.5.0"
+        }
+      }
+    </script>
+    <link rel="stylesheet" href="https://esm.sh/@xterm/xterm@5.5.0/css/xterm.css" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="./js/main.js"></script>
+    <script>
+      // Dev hot-reload — only active when the page itself loads from a
+      // local backend (the /api/dev/ping endpoint exists only on a dev
+      // checkout). On the GH Pages copy this skips entirely.
+      if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+        fetch('/api/dev/ping', { cache: 'no-store' }).then((r) => {
+          if (!r.ok) return;
+          const es = new EventSource('/api/dev/reload');
+          es.addEventListener('reload', () => location.reload());
+        }).catch(() => {});
+      }
+    </script>
+  </body>
+</html>

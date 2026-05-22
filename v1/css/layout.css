@@ -1,0 +1,107 @@
+/* App grid · main column · page header · tab panels · footer status line */
+
+.app {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) 1fr;
+  min-height: 100vh;
+  transition: grid-template-columns .25s cubic-bezier(.4, 0, .2, 1);
+}
+.app:has(.sidebar[data-collapsed="true"]) {
+  grid-template-columns: var(--sidebar-w-collapsed) 1fr;
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: var(--s-8) var(--s-10) var(--s-6);
+  gap: var(--s-6);
+}
+
+.page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-8);
+  padding-bottom: var(--s-5);
+  border-bottom: 1px solid var(--border);
+}
+.page-head-inner { min-width: 0; }
+
+.page-title {
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.024em;
+  color: var(--ink);
+  line-height: 1.1;
+}
+.page-subtitle {
+  margin-top: 4px;
+  font-size: 13.5px;
+  color: var(--ink-mid);
+}
+
+.page-head-meta {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-3);
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+.ph-stat { display: inline-flex; gap: 6px; align-items: baseline; }
+.ph-key {
+  font-family: var(--body);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.ph-val { color: var(--ink-mid); }
+.ph-divider { color: var(--ink-faint); }
+
+.content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.tab-panel {
+  display: none;
+  flex-direction: column;
+  gap: var(--s-6);
+}
+.tab-panel[data-active] {
+  display: flex;
+  animation: panel-in .35s cubic-bezier(.4, 0, .2, 1);
+}
+@keyframes panel-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.footer-status {
+  margin-top: auto;
+  padding-top: var(--s-4);
+  border-top: 1px solid var(--border-soft);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s-2);
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+.footer-status .fs-key {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 10px;
+  color: var(--ink-faint);
+}
+.footer-status .fs-val {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-mid);
+}
+.footer-status .fs-divider { color: var(--ink-faint); margin: 0 var(--s-1); }

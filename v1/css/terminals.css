@@ -1,0 +1,112 @@
+/* Terminals tab · left rail (active sessions) + right pane (xterm host) */
+
+.terminals-layout {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: var(--s-4);
+  /* viewport minus page header + footer + padding; lets xterm fill height */
+  height: calc(100vh - 220px);
+  min-height: 480px;
+}
+
+.terminals-rail {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: var(--s-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+}
+.terminals-rail-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--s-2) var(--s-3);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
+  border-bottom: 1px solid var(--border-soft);
+  margin-bottom: var(--s-2);
+}
+
+/* button row showing one terminal in the rail */
+.terminal-row {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: 10px 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-mid);
+  font-family: var(--body);
+  font-size: 13px;
+  transition: background .12s ease, color .12s ease;
+}
+.terminal-row:hover { background: var(--bg); color: var(--ink); }
+.terminal-row.is-active {
+  background: var(--sidebar-active);
+  color: var(--ink);
+}
+.terminal-row-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  font-weight: 500;
+}
+.terminal-row-meta {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+.terminal-row-actions { display: inline-flex; }
+.terminal-row .action.tiny.danger {
+  padding: 1px 7px;
+  font-size: 11px;
+  min-width: 0;
+}
+
+/* right pane — full-height xterm host */
+.terminals-main {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: var(--s-3);
+  overflow: hidden;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.terminal-host {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+/* Don't override xterm's background — its renderer (canvas/WebGL) assumes
+   an opaque surface and ghosts on scroll if we force transparent. The
+   theme object in TerminalView.js already paints #faf9f5 to match the
+   surrounding card. */
+.terminal-host .xterm-viewport {
+  scrollbar-width: thin;
+}
+
+.terminal-empty {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: var(--ink-muted);
+}
+
+.terminal-empty-page { width: 100%; }
