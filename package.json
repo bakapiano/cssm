@@ -1,6 +1,6 @@
 {
   "name": "@bakapiano/ccsm",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Claude Code Session Manager — Windows web UI to manage many concurrent claude sessions: live list, snapshot/restore, focus existing window, new session in an isolated workspace with repo clones",
   "license": "MIT",
   "main": "server.js",
@@ -12,12 +12,15 @@
     "bin/",
     "lib/",
     "public/",
+    "scripts/",
     "README.md",
     "CLAUDE.md"
   ],
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "postinstall": "node scripts/install.js",
+    "preuninstall": "node scripts/uninstall.js"
   },
   "dependencies": {
     "express": "^4.21.2"

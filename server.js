@@ -96,12 +96,18 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.static(path.join(__dirname, 'public')));
-
-// Dev hot-reload — only when running from a checkout, not from an installed
-// npm package. Watches public/ and pushes an SSE "reload" event so the
-// browser reloads on every file save. CCSM_NO_DEV=1 disables it explicitly.
+// Dev mode = running from a checkout (not from an npm-install location).
+// Used to gate two things: (a) serving static frontend from local public/
+// so a contributor can iterate without pushing to GH Pages; (b) hot-reload
+// SSE endpoint that watches public/ for changes. CCSM_NO_DEV=1 disables
+// both explicitly. In production (npm-installed), backend is API-only —
+// frontend lives at https://bakapiano.github.io/cssm/v1/.
 const IS_DEV = !__dirname.includes(`${path.sep}node_modules${path.sep}`) && process.env.CCSM_NO_DEV !== '1';
+
+if (IS_DEV) {
+  app.use(express.static(path.join(__dirname, 'public')));
+}
+
 const reloadClients = new Set();
 if (IS_DEV) {
   app.get('/api/dev/ping', (_req, res) => res.json({ dev: true }));
@@ -694,7 +700,25 @@ function openInBrowser(url, mode) {
   // the spawned child handle we hold here fires 'exit'. Skip if the user
   // explicitly asked the server to stay alive (e.g. an automation host).
   if (opened.kind === 'app' && opened.child && process.env.CCSM_KEEP_ALIVE !== '1') {
-    opened.child.on('exit', () => gracefulShutdown('browser window closed'));
+    const launchedAt = Date.now();
+    opened.child.on('exit', () => {
+      const alive = Date.now() - launchedAt;
+      // Edge --app= often spawns a process that immediately hands its URL
+      // off to an existing Edge profile process group and exits — our
+      // child handle dies milliseconds after creation. Treat any exit
+      // inside the first 5s as a hand-off, not a real close.
+      if (alive < 5000) {
+        console.log(`[ccsm] spawned browser child exited in ${alive}ms · handed off to an existing Edge instance, staying alive`);
+        return;
+      }
+      // If another client (e.g. a hosted-frontend tab at bakapiano.github.io
+      // /cssm/v1) is heartbeating, don't kill — they're still using us.
+      if (heartbeatSeen && (Date.now() - lastHeartbeat) < 30_000) {
+        console.log('[ccsm] browser closed but another client is heartbeating · staying alive');
+        return;
+      }
+      gracefulShutdown('browser window closed');
+    });
     console.log('[ccsm] tied to browser window — close it to stop ccsm');
   }
 
