@@ -1,12 +1,13 @@
 import { html } from '../html.js';
 import { useState } from 'preact/hooks';
 import { signal } from '@preact/signals';
-import { capabilities, activeTerminalId, selectTab } from '../state.js';
-import { loadWorkspaces, loadWebTerminals } from '../api.js';
+import { capabilities, activeTerminalId, selectTab, config } from '../state.js';
+import { api, loadWorkspaces, loadWebTerminals } from '../api.js';
 import { setToast } from '../toast.js';
 import { streamNewSession, resetProgress } from '../streaming.js';
 import { Card } from '../components/Card.js';
 import { RepoPicker } from '../components/RepoPicker.js';
+import { ReposEditor, addEmptyRepo } from '../components/ReposEditor.js';
 import { WorkspacePicker } from '../components/WorkspacePicker.js';
 import { ProgressList } from '../components/ProgressList.js';
 import { WorkspacesGrid, WorkspacesHeader } from '../components/WorkspacesGrid.js';
@@ -17,16 +18,30 @@ const inlineSelected = signal(new Set());
 
 function NewSessionCard() {
   const [workspace, setWorkspace] = useState('');
-  // 'web' = run inside this page (in-process PTY · bridges to xterm.js)
-  // 'wt'  = open a new Windows Terminal window
-  const initialMode = capabilities.value.webTerminal ? 'web' : 'wt';
-  const [terminal, setTerminal] = useState(initialMode);
   const [result, setResult] = useState('');
   const [busy, setBusy] = useState(false);
+  const [reposSavedAt, setReposSavedAt] = useState('');
+  const repos = config.value?.repos || [];
+  const hasRepos = repos.length > 0;
+  // Always follow the global Configure → "Default mode" setting. The
+  // per-launch picker was removed; users who want a one-off override
+  // change the global setting first. This keeps "new" / "resume" /
+  // "continue" / "finder" all consistent.
+  const cfgDefault = config.value?.defaultTerminalMode || 'wt';
+  const terminal = capabilities.value.webTerminal ? cfgDefault : 'wt';
+
+  const onSaveRepos = async () => {
+    try {
+      const cfg = await api('PUT', '/api/config', config.value);
+      config.value = cfg;
+      setReposSavedAt(`saved · ${new Date().toLocaleTimeString(undefined, { hour12: false })}`);
+      setToast('repos saved');
+    } catch (e) { setToast(e.message, 'error'); }
+  };
 
   const onLaunch = async () => {
     const repos = [...inlineSelected.value];
-    if (repos.length === 0) return setToast('select at least one repo', 'error');
+    // Allow zero-repo launches: workspace is created empty, claude opens there.
     setBusy(true);
     setResult('');
     resetProgress(repos, ROOT_ID);
@@ -77,24 +92,21 @@ function NewSessionCard() {
              meta=${html`Picks an unused workspace, clones missing repos, opens <code>claude</code> in a fresh terminal.`}>
       <div class="form-row">
         <span class="form-label">Repos</span>
-        <${RepoPicker} selectedSig=${inlineSelected} />
+        ${hasRepos
+          ? html`<${RepoPicker} selectedSig=${inlineSelected} />`
+          : html`<span class="muted-text">no repos configured · add one below, or launch with no repos for an empty workspace</span>`}
       </div>
-      ${capabilities.value.webTerminal ? html`
-        <div class="form-row">
-          <span class="form-label">Open in</span>
-          <div class="radio-row">
-            <label class=${`radio${terminal === 'web' ? ' is-checked' : ''}`}>
-              <input type="radio" name="terminal" value="web"
-                     checked=${terminal === 'web'} onChange=${() => setTerminal('web')} />
-              this page
-            </label>
-            <label class=${`radio${terminal === 'wt' ? ' is-checked' : ''}`}>
-              <input type="radio" name="terminal" value="wt"
-                     checked=${terminal === 'wt'} onChange=${() => setTerminal('wt')} />
-              wt window
-            </label>
+      <details class="repos-inline-config" open=${!hasRepos}>
+        <summary>Manage repos</summary>
+        <div class="repos-inline-body">
+          <${ReposEditor} />
+          <div class="repos-inline-actions">
+            <button class="action small" onClick=${() => addEmptyRepo()}>+ Add repo</button>
+            <button class="action small primary" onClick=${onSaveRepos}>Save changes</button>
+            <span class="muted-text">${reposSavedAt}</span>
           </div>
-        </div>` : null}
+        </div>
+      </details>
       <div class="form-row">
         <label class="form-label">Workspace</label>
         <${WorkspacePicker} value=${workspace} onChange=${setWorkspace} />

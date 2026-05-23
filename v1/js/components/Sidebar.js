@@ -1,7 +1,7 @@
 import { html } from '../html.js';
 import {
   activeTab, sidebarCollapsed, configDirty, sessions, webTerminals, capabilities,
-  selectTab, toggleSidebar,
+  selectTab, toggleSidebar, setSidebarWidth, SIDEBAR_MIN, SIDEBAR_MAX,
 } from '../state.js';
 import {
   IconSessions, IconLaunch, IconTerminal, IconConfigure, IconInfo,
@@ -22,6 +22,29 @@ function NavItem({ tab, icon, label, badge, dirty }) {
 
 export function Sidebar() {
   const collapsed = sidebarCollapsed.value;
+
+  // Drag-to-resize handle. Pointer events let one handler cover mouse,
+  // touch, pen uniformly + setPointerCapture means dragging continues
+  // even if cursor leaves the 4px-wide handle. Collapsed sidebars don't
+  // expose a handle — Collapse-toggle is the only way out/in.
+  const onResizeStart = (ev) => {
+    if (collapsed) return;
+    ev.preventDefault();
+    const el = ev.currentTarget;
+    el.setPointerCapture(ev.pointerId);
+    document.body.classList.add('is-resizing-sidebar');
+    const move = (e) => setSidebarWidth(e.clientX);
+    const up = (e) => {
+      el.releasePointerCapture(ev.pointerId);
+      document.body.classList.remove('is-resizing-sidebar');
+      el.removeEventListener('pointermove', move);
+      el.removeEventListener('pointerup', up);
+      el.removeEventListener('pointercancel', up);
+    };
+    el.addEventListener('pointermove', move);
+    el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', up);
+  };
 
   return html`
     <aside class="sidebar" data-collapsed=${collapsed ? 'true' : 'false'}>
@@ -48,5 +71,13 @@ export function Sidebar() {
           <span class="nav-label">Collapse</span>
         </button>
       </div>
+
+      ${!collapsed ? html`
+        <div class="sidebar-resize-handle" role="separator" aria-orientation="vertical"
+             aria-label="resize sidebar"
+             title="drag to resize · double-click to reset"
+             onPointerDown=${onResizeStart}
+             onDblClick=${() => setSidebarWidth(232)}></div>
+      ` : null}
     </aside>`;
 }

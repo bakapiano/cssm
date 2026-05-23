@@ -5,8 +5,8 @@
 import { html } from '../html.js';
 import { useEffect, useState } from 'preact/hooks';
 import { signal } from '@preact/signals';
-import { modalOpen, config } from '../state.js';
-import { api, loadWorkspaces } from '../api.js';
+import { modalOpen, config, capabilities, activeTerminalId, selectTab } from '../state.js';
+import { api, loadWorkspaces, loadWebTerminals } from '../api.js';
 import { setToast } from '../toast.js';
 import { streamNewSession, resetProgress } from '../streaming.js';
 import { IconClose } from '../icons.js';
@@ -51,29 +51,40 @@ function ModalBody() {
 
   const onLaunch = async () => {
     const repos = [...modalSelected.value];
-    if (repos.length === 0) return setToast('select at least one repo', 'error');
     setBusy(true);
     setResult('');
     resetProgress(repos, ROOT_ID);
+    const wantWeb = capabilities.value?.webTerminal
+      && (config.value?.defaultTerminalMode || 'wt') === 'web';
+    const terminal = wantWeb ? 'web' : 'wt';
     try {
       const final = await streamNewSession(
-        { repos, workspace: workspace || undefined },
+        { repos, workspace: workspace || undefined, terminal },
         {
           progressRootId: ROOT_ID,
           onMeta: (ev) => {
             if (ev.type === 'workspace') {
               setResult(`workspace: ${ev.workspace.path}${ev.created ? ' · newly created' : ''}`);
             } else if (ev.type === 'launched') {
-              setResult(`terminal launching · pid ${ev.launched.pid} · ${ev.launched.terminal}`);
+              const l = ev.launched || {};
+              if (l.mode === 'web') setResult(`web terminal launched · pid ${l.pid} · id ${l.id}`);
+              else setResult(`terminal launching · pid ${l.pid} · ${l.terminal}`);
             }
           },
         },
       );
       if (final.success) {
         const summary = (final.cloneResults || []).map((c) => `${c.repo}: ${c.action || c.error}`).join(' · ');
-        setResult(`launched in ${final.workspace.path}${final.created ? ' · newly created' : ''} — ${summary}`);
+        setResult(`launched in ${final.workspace.path}${final.created ? ' · newly created' : ''}${summary ? ' — ' + summary : ''}`);
         setToast(`launched · ${final.workspace.name}`);
-        setTimeout(close, 1500);
+        if (terminal === 'web' && final.launched?.id) {
+          activeTerminalId.value = final.launched.id;
+          await loadWebTerminals();
+          selectTab('terminals');
+          modalOpen.value = false;
+        } else {
+          setTimeout(close, 1500);
+        }
       } else {
         setResult(`error: ${final.error}`);
         setToast(final.error || 'new session failed', 'error');

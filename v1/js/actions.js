@@ -1,8 +1,8 @@
 // Mutation actions shared by SessionsPage, FavoritesTable etc. — each
 // optimistically updates the relevant signal and rolls back on error.
 
-import { favorites, labels, sessions, recent } from './state.js';
-import { api, loadSessions, loadRecent } from './api.js';
+import { favorites, labels, sessions, recent, config, capabilities, activeTerminalId, selectTab } from './state.js';
+import { api, loadSessions, loadRecent, loadWebTerminals } from './api.js';
 import { setToast } from './toast.js';
 import { ccsmPrompt } from './dialog.js';
 
@@ -68,10 +68,20 @@ export async function focusSession(sessionId) {
 
 export async function resumeSession(sessionId, cwd, { kind = 'resume' } = {}) {
   if (!cwd) return setToast('no cwd for this session', 'error');
+  const wantWeb = capabilities.value?.webTerminal
+    && (config.value?.defaultTerminalMode || 'wt') === 'web';
+  const terminal = wantWeb ? 'web' : 'wt';
   try {
-    await api('POST', `/api/sessions/${sessionId}/resume`, { cwd });
-    const verb = kind === 'continue' ? 'continuing' : 'opening wt';
-    setToast(`${verb} · ${sessionId.slice(0, 8)}…`);
+    const r = await api('POST', `/api/sessions/${sessionId}/resume`, { cwd, terminal });
+    if (r.launched?.mode === 'web') {
+      setToast(`${kind === 'continue' ? 'continuing' : 'resuming'} in web · ${sessionId.slice(0, 8)}…`);
+      await loadWebTerminals();
+      if (r.launched.id) activeTerminalId.value = r.launched.id;
+      selectTab('terminals');
+    } else {
+      const verb = kind === 'continue' ? 'continuing' : 'opening wt';
+      setToast(`${verb} · ${sessionId.slice(0, 8)}…`);
+    }
     if (kind === 'continue') {
       setTimeout(() => loadSessions().catch(() => {}), 3000);
       setTimeout(() => loadRecent().catch(() => {}), 4000);
@@ -80,8 +90,18 @@ export async function resumeSession(sessionId, cwd, { kind = 'resume' } = {}) {
 }
 
 export async function runFinder() {
+  const wantWeb = capabilities.value?.webTerminal
+    && (config.value?.defaultTerminalMode || 'wt') === 'web';
+  const terminal = wantWeb ? 'web' : 'wt';
   try {
-    await api('POST', '/api/sessions/finder');
-    setToast('finder session launching in a new wt window');
+    const r = await api('POST', '/api/sessions/finder', { terminal });
+    if (r.launched?.mode === 'web') {
+      await loadWebTerminals();
+      if (r.launched.id) activeTerminalId.value = r.launched.id;
+      selectTab('terminals');
+      setToast('finder launching in web terminal');
+    } else {
+      setToast('finder session launching in a new wt window');
+    }
   } catch (e) { setToast(e.message, 'error'); }
 }

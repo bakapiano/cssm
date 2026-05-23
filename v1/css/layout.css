@@ -9,6 +9,11 @@
 .app:has(.sidebar[data-collapsed="true"]) {
   grid-template-columns: var(--sidebar-w-collapsed) 1fr;
 }
+/* While dragging the sidebar resize handle, kill the transition so the
+   grid tracks pointermove pixel-for-pixel instead of lagging behind. */
+body.is-resizing-sidebar .app {
+  transition: none;
+}
 
 .main {
   display: flex;
