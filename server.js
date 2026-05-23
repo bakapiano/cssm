@@ -101,7 +101,7 @@ app.use((req, res, next) => {
 // so a contributor can iterate without pushing to GH Pages; (b) hot-reload
 // SSE endpoint that watches public/ for changes. CCSM_NO_DEV=1 disables
 // both explicitly. In production (npm-installed), backend is API-only —
-// frontend lives at https://bakapiano.github.io/cssm/v1/.
+// frontend lives at https://bakapiano.github.io/ccsm/v1/.
 const IS_DEV = !__dirname.includes(`${path.sep}node_modules${path.sep}`) && process.env.CCSM_NO_DEV !== '1';
 
 if (IS_DEV) {
@@ -313,13 +313,17 @@ app.post('/api/sessions/new', async (req, res) => {
 
   try {
     const cfg = await loadConfig();
-    const wantedNames = Array.isArray(req.body && req.body.repos)
+    const explicitRepos = Array.isArray(req.body && req.body.repos);
+    const wantedNames = explicitRepos
       ? req.body.repos
       : cfg.repos.filter((r) => r.defaultSelected).map((r) => r.name);
 
     const wantedRepos = cfg.repos.filter((r) => wantedNames.includes(r.name));
-    if (wantedRepos.length === 0) {
-      return fail('No repos selected and no defaults available');
+    // Allow launching with zero repos — caller explicitly passed [] (or no
+    // defaults exist). The workspace is still created; claude just opens
+    // in an empty directory.
+    if (wantedRepos.length === 0 && !explicitRepos && wantedNames.length > 0) {
+      return fail('No matching repos found');
     }
 
     let workspace;
@@ -433,8 +437,26 @@ app.post('/api/sessions/new', async (req, res) => {
 });
 
 // ---- launch finder session (a claude session in the ccsm data dir pre-pointed at session data) ----
-app.post('/api/sessions/finder', asyncH(async (_req, res) => {
+app.post('/api/sessions/finder', asyncH(async (req, res) => {
   const cfg = await loadConfig();
+  const mode = (req.body && req.body.terminal)
+    || cfg.defaultTerminalMode
+    || 'wt';
+  if (mode === 'web') {
+    if (!webTerminal.available) {
+      return res.status(400).json({ error: 'node-pty unavailable · cannot launch finder in web terminal' });
+    }
+    const cmd = cfg.claudeCommand || 'claude';
+    const wrap = (cfg.commandShell || 'pwsh') === 'powershell' ? 'powershell.exe' : 'pwsh.exe';
+    const promptArg = cfg.finderPrompt ? ` '${cfg.finderPrompt.replace(/'/g, "''")}'` : '';
+    const entry = webTerminal.spawn({
+      command: wrap,
+      args: ['-NoExit', '-NoLogo', '-Command', `Set-Location -LiteralPath '${DATA_DIR.replace(/'/g, "''")}'; & '${cmd.replace(/'/g, "''")}'${promptArg}`],
+      cwd: DATA_DIR,
+      meta: { title: 'ccsm finder', cwd: DATA_DIR },
+    });
+    return res.json({ launched: { mode: 'web', id: entry.id, pid: entry.meta.pid, terminal: 'web' }, cwd: DATA_DIR, prompt: cfg.finderPrompt });
+  }
   const beforeHwnds = await snapshotWindowsOf(processNameFor(cfg.terminal) || 'WindowsTerminal.exe');
   const launched = launchNewClaude({
     cwd: DATA_DIR,
@@ -449,7 +471,7 @@ app.post('/api/sessions/finder', asyncH(async (_req, res) => {
     beforeHwnds,
     autoFocus: cfg.autoFocusOnLaunch !== false,
   });
-  res.json({ launched, cwd: DATA_DIR, prompt: cfg.finderPrompt });
+  res.json({ launched: { mode: 'wt', ...launched }, cwd: DATA_DIR, prompt: cfg.finderPrompt });
 }));
 
 // ---- resume single session ----
@@ -458,6 +480,23 @@ app.post('/api/sessions/:sessionId/resume', asyncH(async (req, res) => {
   const cwd = req.body && req.body.cwd;
   if (!cwd) return res.status(400).json({ error: 'cwd required in body' });
   const cfg = await loadConfig();
+  const mode = (req.body && req.body.terminal)
+    || cfg.defaultTerminalMode
+    || 'wt';
+  if (mode === 'web') {
+    if (!webTerminal.available) {
+      return res.status(400).json({ error: 'node-pty unavailable · cannot resume in web terminal' });
+    }
+    const cmd = cfg.claudeCommand || 'claude';
+    const wrap = (cfg.commandShell || 'pwsh') === 'powershell' ? 'powershell.exe' : 'pwsh.exe';
+    const entry = webTerminal.spawn({
+      command: wrap,
+      args: ['-NoExit', '-NoLogo', '-Command', `Set-Location -LiteralPath '${cwd.replace(/'/g, "''")}'; & '${cmd.replace(/'/g, "''")}' --resume '${sessionId.replace(/'/g, "''")}'`],
+      cwd,
+      meta: { title: `resume ${sessionId.slice(0, 8)}`, cwd, sessionId },
+    });
+    return res.json({ launched: { mode: 'web', id: entry.id, pid: entry.meta.pid, terminal: 'web' } });
+  }
   const beforeHwnds = await snapshotWindowsOf(processNameFor(cfg.terminal) || 'WindowsTerminal.exe');
   const launched = launchResume({
     cwd,
@@ -471,7 +510,7 @@ app.post('/api/sessions/:sessionId/resume', asyncH(async (req, res) => {
     beforeHwnds,
     autoFocus: cfg.autoFocusOnLaunch !== false,
   });
-  res.json({ launched });
+  res.json({ launched: { mode: 'wt', ...launched } });
 }));
 
 // ---- focus the wt window that's already hosting this session ----
@@ -645,7 +684,10 @@ function openInBrowser(url, mode) {
 
 (async () => {
   const cfg = await loadConfig();
-  const { server, port } = await listenWithFallback(cfg.port);
+  // CCSM_PORT env var wins over config — handy for running a dev instance
+  // on a non-default port (e.g. 7778) while a prod ccsm keeps 7777.
+  const preferredPort = process.env.CCSM_PORT ? Number(process.env.CCSM_PORT) : cfg.port;
+  const { server, port } = await listenWithFallback(preferredPort);
   currentPort = port;
 
   // WebSocket upgrade for /ws/terminal/:id → bridges xterm.js to a PTY
@@ -688,7 +730,7 @@ function openInBrowser(url, mode) {
   //   prod → hosted frontend on GH Pages (backend is API-only)
   const FRONTEND_URL = IS_DEV
     ? apiUrl
-    : 'https://bakapiano.github.io/cssm/v1/';
+    : 'https://bakapiano.github.io/ccsm/v1/';
   frontendUrl = FRONTEND_URL;
   console.log(`ccsm listening on ${apiUrl}${port !== cfg.port ? `  (requested ${cfg.port}, was taken)` : ''}`);
   console.log(`frontend at      ${FRONTEND_URL}`);

@@ -1,0 +1,40 @@
+name: Publish to npm
+
+# Triggered when a GitHub Release is published. Workflow:
+#   1. local:   npm version minor -m "release v%s" && git push --follow-tags
+#   2. github:  Releases → Draft a new release → pick the new tag → publish
+#   3. here:    builds, publishes to npm with provenance, attaches a sigstore
+#               attestation that npm displays as a "Provenance" badge.
+#
+# Provenance requires `id-token: write` (GitHub OIDC) and npm CLI ≥ 9.5.
+# It binds the published tarball to *this* commit + workflow run, so users
+# can verify on npmjs.com that the bytes really came from this repo's CI.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:   # manual trigger for retries / dry runs
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      # --ignore-scripts skips our postinstall (scripts/install.js writes
+      # Windows registry — would fail on Linux CI and isn't needed for
+      # publishing the tarball).
+      - run: npm ci --ignore-scripts
+
+      - name: Publish
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

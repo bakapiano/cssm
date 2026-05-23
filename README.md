@@ -4,11 +4,11 @@ A single pane over every live Claude Code session on your machine.
 Hosted web UI + tiny local Node daemon. Windows-first; cross-platform
 in progress.
 
-[![open](https://img.shields.io/badge/open-bakapiano.github.io%2Fcssm%2Fv1-1a1815?style=flat-square)](https://bakapiano.github.io/cssm/v1/)
+[![open](https://img.shields.io/badge/open-bakapiano.github.io%2Fccsm%2Fv1-1a1815?style=flat-square)](https://bakapiano.github.io/ccsm/v1/)
 
 ```
 ┌── browser ─────────────────────────┐
-│  https://bakapiano.github.io/cssm/v1/   ← static frontend
+│  https://bakapiano.github.io/ccsm/v1/   ← static frontend
 └────────────┬───────────────────────┘
              │  fetch /api/*   (CORS)
              │  ws://localhost:7777/ws/*
@@ -51,7 +51,7 @@ gets registered.
 ccsm                       # starts the backend, opens the frontend
 ```
 
-Or just visit **https://bakapiano.github.io/cssm/v1/** in any browser.
+Or just visit **https://bakapiano.github.io/ccsm/v1/** in any browser.
 If the backend isn't running, you'll see a "Backend not running" banner
 with a **Start ccsm** button — click it, Windows asks once whether to
 open the `ccsm://` handler (check "Always allow"), and the backend
@@ -119,7 +119,7 @@ ccsm/
 
 ## How "wake on click" works
 
-The hosted frontend (https://bakapiano.github.io/cssm/v1/) lives entirely
+The hosted frontend (https://bakapiano.github.io/ccsm/v1/) lives entirely
 in the browser sandbox — it cannot spawn processes. So when the backend
 is down, the OfflineBanner's **Start ccsm** is a plain
 `<a href="ccsm://start">`. The OS hands that off to a per-user URL
@@ -151,7 +151,7 @@ Every gracefulShutdown saves a final snapshot before exit.
 ## Dev
 
 ```bash
-git clone https://github.com/bakapiano/cssm
+git clone https://github.com/bakapiano/ccsm
 cd cssm
 npm install
 node server.js
@@ -175,8 +175,8 @@ build feature-detects via `/api/capabilities`, so a slightly older
 backend still works as long as it advertises the needed feature.
 
 ```
-https://bakapiano.github.io/cssm/v1/   ← current
-https://bakapiano.github.io/cssm/v2/   ← future, when /api breaking-changes
+https://bakapiano.github.io/ccsm/v1/   ← current
+https://bakapiano.github.io/ccsm/v2/   ← future, when /api breaking-changes
 ```
 
 Installed PWAs are pinned to whichever path they were installed from.

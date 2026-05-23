@@ -4,7 +4,7 @@ import { setToast } from '../toast.js';
 import { Card } from '../components/Card.js';
 import { BrandMark, IconGithub, IconExternal } from '../icons.js';
 
-const REPO_URL = 'https://github.com/bakapiano/cssm';
+const REPO_URL = 'https://github.com/bakapiano/ccsm';
 const NPM_URL  = 'https://www.npmjs.com/package/@bakapiano/ccsm';
 
 async function onInstall() {

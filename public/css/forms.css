@@ -280,3 +280,54 @@ input[type="checkbox"]:checked::after {
 .repos-table thead th:last-child,
 .repos-table tbody td:last-child { padding-right: var(--s-2); }
 .repos-table tbody td input { font-size: 12px; max-width: none; }
+
+/* Theme accent picker (Configure tab). 8 swatches + native color picker
+   + hex input + reset. Swatches are filled circles; the active one wears
+   a subtle ring in --ink so it pops on any accent. */
+.accent-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.accent-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+.accent-swatch {
+  appearance: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  cursor: pointer;
+  padding: 0;
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+.accent-swatch:hover { transform: scale(1.08); }
+.accent-swatch.is-active {
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--ink);
+}
+.accent-custom {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.accent-custom input[type="color"] {
+  width: 36px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-elev);
+  cursor: pointer;
+}
+.accent-hex {
+  font-family: var(--mono);
+  font-size: 12px;
+  width: 96px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-elev);
+}

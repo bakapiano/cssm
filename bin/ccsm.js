@@ -176,7 +176,7 @@ function isSameVersion(running) {
   }
   console.log(`ccsm started · v${ready.version}`);
   console.log(`backend:  http://localhost:${actualPort}${actualPort !== port ? `  (preferred ${port} was taken)` : ''}`);
-  console.log(`frontend: https://bakapiano.github.io/cssm/v1/`);
+  console.log(`frontend: https://bakapiano.github.io/ccsm/v1/`);
   console.log(`logs:     ${LOG}`);
 
   // First-run hint — printed once, then a marker file makes us quiet.

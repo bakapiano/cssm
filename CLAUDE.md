@@ -16,12 +16,12 @@ at-a-glance list and a snapshot/restore safety net.
 
 The single most important fact about ccsm v0.8+ is that **the frontend
 is no longer bundled into the npm package** in production. It lives at
-`https://bakapiano.github.io/cssm/v1/`, served by GitHub Pages, deployed
+`https://bakapiano.github.io/ccsm/v1/`, served by GitHub Pages, deployed
 via the workflow at `.github/workflows/deploy-pages.yml`.
 
 ```
 ┌── browser ────────────────────────────┐
-│  https://bakapiano.github.io/cssm/v1/    ← static frontend
+│  https://bakapiano.github.io/ccsm/v1/    ← static frontend
 └────────────┬──────────────────────────┘
              │  fetch /api/*   (CORS, allow-list)
              │  ws://localhost:7777/ws/*
@@ -62,7 +62,7 @@ Terminal returns immediately (the server is spawned detached). Close
 the window → server saves a final snapshot and exits within ~12s.
 
 If you don't want the auto-opened window (e.g. you live in the PWA),
-just visit `https://bakapiano.github.io/cssm/v1/` — when backend is
+just visit `https://bakapiano.github.io/ccsm/v1/` — when backend is
 down you see an OfflineBanner with a **Start ccsm** button.
 
 Default port `7777`, default workDir `~/ccsm-workspaces`. Config +

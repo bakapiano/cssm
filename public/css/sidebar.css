@@ -9,7 +9,10 @@
   display: flex;
   flex-direction: column;
   padding: var(--s-4) var(--s-3);
-  overflow: hidden;
+  /* visible: let the resize handle (positioned at right: -3px) overflow the
+     sidebar's right edge. We instead clip the things that USED to need
+     this via the .sidebar-nav scroll region. */
+  overflow: visible;
   transition: padding .25s cubic-bezier(.4, 0, .2, 1);
 }
 .sidebar[data-collapsed="true"] {
@@ -162,4 +165,38 @@
 }
 .sidebar[data-collapsed="true"] .collapse-toggle .nav-icon {
   transform: rotate(180deg);
+}
+
+/* Drag-to-resize handle. Sits absolutely against the sidebar's right
+   border so the cursor target spans the full height. 6px wide hit area
+   centered on the visible 1px border — easy to grab without bumping
+   into adjacent layout. */
+.sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 5;
+  touch-action: none;
+  /* Subtle hover indicator: deepens the border-right color on hover so the
+     user knows the edge is interactive. */
+  background: transparent;
+  transition: background .12s ease;
+}
+.sidebar-resize-handle:hover,
+body.is-resizing-sidebar .sidebar-resize-handle {
+  background: linear-gradient(to right, transparent 0, transparent 2px,
+                              var(--ink-mid) 2px, var(--ink-mid) 3px,
+                              transparent 3px);
+}
+/* While dragging, freeze global cursor + suppress text selection so the
+   whole page tracks resize cleanly even if pointer leaves the handle. */
+body.is-resizing-sidebar {
+  cursor: col-resize !important;
+  user-select: none;
+}
+body.is-resizing-sidebar * {
+  cursor: col-resize !important;
 }

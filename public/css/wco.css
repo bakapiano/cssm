@@ -58,6 +58,34 @@ body.is-app .sidebar-brand {
 }
 body.is-app .page-head {
   padding-top: var(--s-8); /* 32px = old main.pt */
+  /* Reserve space on the right for the OS window controls (close /
+     maximize / minimize) that float over the top-right of every
+     chromeless app window — both --app= (display-mode: standalone)
+     and PWA. Without this, the server-status pill + Refresh button
+     slide under those controls and stop being clickable. ~150px covers
+     three Windows controls + a little breathing room; macOS traffic
+     lights are on the left so this is harmless there. The WCO override
+     below uses the precise env() value when the API is available. */
+  padding-right: 150px;
+}
+
+/* In app/PWA mode, hide the in-page title/subtitle entirely. The sidebar
+   nav already tells the user which section they're on, and the OS title
+   bar (or the floating WCO controls) is the only chrome we want. This
+   reclaims a chunky 60+ px of vertical real estate at the top of every
+   tab — really noticeable in the Terminals tab where xterm benefits
+   from every pixel. The page-head wrapper survives because it still
+   hosts the status pill + Refresh button on the right and remains
+   draggable. */
+body.is-app .page-title,
+body.is-app .page-subtitle {
+  display: none;
+}
+body.is-app .page-head {
+  padding-bottom: 0;
+  border-bottom: 0;
+  align-items: center;
+  min-height: 28px;
 }
 
 /* WCO-only · the OS title bar is fully gone, so right-pad the page-head
@@ -66,5 +94,6 @@ body.is-app .page-head {
 @media (display-mode: window-controls-overlay) {
   .page-head {
     padding-right: calc(var(--s-10) + 100vw - env(titlebar-area-width, 100vw));
+    min-height: env(titlebar-area-height, 32px);
   }
 }

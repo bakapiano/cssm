@@ -1,5 +1,5 @@
 // Shown when the backend probe fails. The hosted frontend (running at
-// https://bakapiano.github.io/cssm/v1/) can't spawn processes directly,
+// https://bakapiano.github.io/ccsm/v1/) can't spawn processes directly,
 // so we surface a ccsm://start link instead. Windows / OS will hand that
 // off to the registered protocol handler (ccsm.cmd), which spawns the
 // backend silently. Our health probe picks it up on the next tick and

@@ -3,7 +3,7 @@
 
 // ccsm postinstall · Windows-only · runs after `npm install -g @bakapiano/ccsm`.
 // Registers the `ccsm://` URL protocol in HKCU so the hosted frontend
-// (https://bakapiano.github.io/cssm/v1/) can fire `<a href="ccsm://start">`
+// (https://bakapiano.github.io/ccsm/v1/) can fire `<a href="ccsm://start">`
 // from its OfflineBanner and have Windows spawn the backend on demand.
 //
 // Best-effort: any failure MUST NOT break npm install. Each step is in
