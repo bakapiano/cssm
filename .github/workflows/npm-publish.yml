@@ -29,11 +29,11 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
 
-      # --ignore-scripts skips our postinstall (scripts/install.js writes
-      # Windows registry — would fail on Linux CI and isn't needed for
-      # publishing the tarball).
-      - run: npm ci --ignore-scripts
-
+      # No `npm install` — `npm publish` just packs the `files` listed in
+      # package.json into a tarball and uploads. It doesn't execute our
+      # code on the runner, so we don't need deps. Skipping install also
+      # sidesteps the `"os": ["win32"]` runtime gate which would reject
+      # `npm install` on this Linux runner.
       - name: Publish
         run: npm publish --provenance --access public
         env:
