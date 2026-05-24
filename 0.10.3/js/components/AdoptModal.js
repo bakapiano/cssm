@@ -10,16 +10,24 @@
 //   onAdopted(sessionId)         — fires after a successful adopt with
 //                                  the new (or pre-existing) record id
 //
-// Shows a row of cli-type tabs at the top. Each tab loads on first
-// click. Adopted rows are greyed out and labelled.
+// Tabs across the top switch the upstream type. Below the tabs, an
+// "Adopt as <CLI ▾>" chip filters the configured CLIs by matching
+// `type` and reuses the global PickerPanel popover. A search box
+// filters rows by title + cwd. Each row is a card with the prompt
+// summary, cwd, age, and an Import button.
 
 import { html } from '../html.js';
-import { useState, useEffect } from 'preact/hooks';
+import { useState, useEffect, useRef, useMemo } from 'preact/hooks';
 import { Modal } from './Modal.js';
+import { Popover } from './Popover.js';
+import { PickerPanel } from './Picker.js';
 import { config } from '../state.js';
 import { listLocalCliSessions, adoptSession } from '../api.js';
 import { setToast } from '../toast.js';
-import { IconForCliType, IconClaudeColor, IconCodexColor, IconCopilotColor } from '../icons.js';
+import {
+  IconForCliType, IconClaudeColor, IconCodexColor, IconCopilotColor,
+  IconSearch, IconClose, IconChevronDown, IconBranch,
+} from '../icons.js';
 
 const TABS = [
   { type: 'claude',  label: 'Claude',  Icon: IconClaudeColor },
@@ -29,9 +37,12 @@ const TABS = [
 
 export function AdoptModal({ onClose, onAdopted }) {
   const [tab, setTab] = useState('claude');
-  // cache per tab so flipping back is instant
-  const [cache, setCache] = useState({}); // { claude: {loading, error, items} }
-  const [adopting, setAdopting] = useState(null); // cliSessionId being adopted
+  const [cache, setCache] = useState({});             // { type: { loading, error, items } }
+  const [adopting, setAdopting] = useState(null);     // cliSessionId being adopted
+  const [query, setQuery] = useState('');
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [cliOverride, setCliOverride] = useState({}); // type → user-picked cli id
+  const cliAnchorRef = useRef(null);
 
   const load = async (type, { force = false } = {}) => {
     if (!force && cache[type] && !cache[type].error) return;
@@ -45,20 +56,65 @@ export function AdoptModal({ onClose, onAdopted }) {
   };
 
   useEffect(() => { load(tab); /* eslint-disable-next-line */ }, [tab]);
+  // Clear search when switching tabs
+  useEffect(() => { setQuery(''); }, [tab]);
 
   const cfg = config.value || {};
   const clis = cfg.clis || [];
-  // Pick first matching configured CLI for the current upstream type; fall
-  // back to the configured default. Users can change per-row via the select.
-  const defaultCliFor = (type) => {
-    const match = clis.find((c) => c.type === type);
-    if (match) return match.id;
-    return cfg.defaultCliId || clis[0]?.id || '';
-  };
-  const [chosenCli, setChosenCli] = useState({}); // cliSessionId → cli id override
+  // CLIs of the same upstream `type` as the active tab — these are the
+  // ones the row's `--resume <id>` template will actually work with.
+  const matchingClis = useMemo(
+    () => clis.filter((c) => c.type === tab),
+    [clis, tab],
+  );
+
+  // Effective CLI for the current tab: user override → first matching
+  // → configured default → first cli.
+  const effectiveCliId =
+    cliOverride[tab]
+    || matchingClis[0]?.id
+    || cfg.defaultCliId
+    || clis[0]?.id
+    || '';
+  const effectiveCli = clis.find((c) => c.id === effectiveCliId) || null;
+
+  // Items the picker shows — prefer same-type CLIs at top, then dim others.
+  const pickerItems = useMemo(() => {
+    const Icon = IconForCliType(tab);
+    const top = matchingClis.map((c) => ({
+      id: c.id,
+      icon: html`<${Icon} />`,
+      label: c.name,
+      meta: c.command,
+    }));
+    const others = clis
+      .filter((c) => c.type !== tab)
+      .map((c) => {
+        const I = IconForCliType(c.type);
+        return {
+          id: c.id,
+          icon: html`<${I} />`,
+          label: c.name,
+          meta: `(non-${tab})`,
+        };
+      });
+    return [...top, ...others];
+  }, [clis, matchingClis, tab]);
+
+  const state = cache[tab] || { loading: true, items: [], error: null };
+  const items = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return state.items;
+    return state.items.filter((it) => {
+      const hay = `${it.summary || ''} ${it.cwd || ''} ${it.cliSessionId}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [state.items, query]);
+
+  const unimportedCount = state.items.filter((it) => !it.adopted).length;
 
   const adopt = async (item) => {
-    const cliId = chosenCli[item.cliSessionId] || defaultCliFor(item.cliType);
+    const cliId = effectiveCliId;
     if (!cliId) { setToast('configure a CLI first', 'error'); return; }
     setAdopting(item.cliSessionId);
     try {
@@ -68,12 +124,8 @@ export function AdoptModal({ onClose, onAdopted }) {
         cwd: item.cwd,
         title: item.summary || '',
       });
-      if (r.alreadyAdopted) {
-        setToast('already in ccsm — opened existing record');
-      } else {
-        setToast(`imported · ${item.cliSessionId.slice(0, 8)}…`);
-      }
-      // Mark adopted in the cache so the UI updates instantly.
+      if (r.alreadyAdopted) setToast('already in ccsm — opened existing record');
+      else setToast(`imported · ${item.cliSessionId.slice(0, 8)}…`);
       setCache((c) => ({
         ...c,
         [tab]: c[tab] ? {
@@ -90,69 +142,119 @@ export function AdoptModal({ onClose, onAdopted }) {
     }
   };
 
-  const state = cache[tab] || { loading: true, items: [], error: null };
-
   return html`
-    <${Modal} title="Import existing session" onClose=${onClose} width=${640}>
-      <div class="adopt-tabs">
-        ${TABS.map((t) => html`
-          <button type="button"
-                  class=${`adopt-tab${tab === t.type ? ' is-active' : ''}`}
-                  onClick=${() => setTab(t.type)}>
-            <span class="adopt-tab-icon"><${t.Icon} /></span>
-            <span>${t.label}</span>
-          </button>`)}
-        <button type="button" class="action subtle adopt-refresh"
-                title="Rescan"
-                onClick=${() => load(tab, { force: true })}>Refresh</button>
-      </div>
+    <${Modal} title="Import existing session" onClose=${onClose} width=${680}>
+      <div class="adopt">
+        <!-- Tabs row -->
+        <div class="adopt-tabs">
+          ${TABS.map((t) => {
+            const cnt = cache[t.type]?.items?.filter((x) => !x.adopted).length;
+            return html`
+              <button type="button" key=${t.type}
+                      class=${`adopt-tab${tab === t.type ? ' is-active' : ''}`}
+                      onClick=${() => setTab(t.type)}>
+                <span class="adopt-tab-icon"><${t.Icon} /></span>
+                <span>${t.label}</span>
+                ${typeof cnt === 'number' && cnt > 0 ? html`
+                  <span class="adopt-tab-count">${cnt}</span>
+                ` : null}
+              </button>`;
+          })}
+          <button type="button" class="adopt-icon-btn" title="Rescan"
+                  onClick=${() => load(tab, { force: true })}>
+            <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+              <path d="M2 8a6 6 0 0 1 10.3-4.2L14 2v4h-4l1.5-1.5A4.5 4.5 0 1 0 12.5 8H14a6 6 0 1 1-12 0z"
+                    fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        </div>
 
-      <div class="adopt-body">
-        ${state.loading ? html`
-          <div class="adopt-empty">Scanning…</div>
-        ` : state.error ? html`
-          <div class="adopt-empty adopt-error">${state.error}</div>
-        ` : state.items.length === 0 ? html`
-          <div class="adopt-empty">No ${tab} sessions found on this machine.</div>
-        ` : html`
-          <ul class="adopt-list">
-            ${state.items.map((it) => html`
-              <li class=${`adopt-item${it.adopted ? ' is-adopted' : ''}`}
-                  key=${it.cliSessionId}>
-                <div class="adopt-main">
-                  <div class="adopt-title">
-                    ${it.summary || html`<span class="ink-faint">(no preview)</span>`}
+        <!-- Tools row: CLI picker + search -->
+        <div class="adopt-tools">
+          <button type="button" ref=${cliAnchorRef}
+                  class=${`adopt-cli-pill${pickerOpen ? ' is-open' : ''}`}
+                  onClick=${() => setPickerOpen((v) => !v)}>
+            <span class="adopt-cli-pill-prefix">Adopt as</span>
+            <span class="adopt-cli-pill-icon">
+              ${effectiveCli ? html`${(() => {
+                const I = IconForCliType(effectiveCli.type);
+                return html`<${I} />`;
+              })()}` : null}
+            </span>
+            <span class="adopt-cli-pill-name">${effectiveCli?.name || 'choose CLI'}</span>
+            <${IconChevronDown} />
+          </button>
+          ${pickerOpen ? html`
+            <${Popover} anchor=${cliAnchorRef} onClose=${() => setPickerOpen(false)} width=${300}>
+              <${PickerPanel}
+                title=${`CLI for ${tab} sessions`}
+                items=${pickerItems}
+                selectedId=${effectiveCliId}
+                showSearch=${pickerItems.length > 6}
+                emptyHint=${`No configured CLIs match ${tab}.`}
+                onSelect=${(id) => { setCliOverride((m) => ({ ...m, [tab]: id })); }}
+                onClose=${() => setPickerOpen(false)} />
+            </${Popover}>` : null}
+
+          <div class="adopt-search">
+            <span class="adopt-search-icon"><${IconSearch} /></span>
+            <input class="adopt-search-input"
+                   placeholder=${state.loading ? 'Loading…' : `Search ${unimportedCount} sessions…`}
+                   value=${query} disabled=${state.loading}
+                   onInput=${(e) => setQuery(e.target.value)} />
+            ${query ? html`
+              <button class="adopt-search-clear" type="button"
+                      onClick=${() => setQuery('')} title="Clear">
+                <${IconClose} />
+              </button>` : null}
+          </div>
+        </div>
+
+        <!-- List body -->
+        <div class="adopt-body">
+          ${state.loading ? html`
+            <div class="adopt-empty"><span class="adopt-empty-spinner"></span> Scanning…</div>
+          ` : state.error ? html`
+            <div class="adopt-empty adopt-error">${state.error}</div>
+          ` : state.items.length === 0 ? html`
+            <div class="adopt-empty">
+              <div class="adopt-empty-mark">∅</div>
+              No ${tab} sessions found on this machine.
+            </div>
+          ` : items.length === 0 ? html`
+            <div class="adopt-empty">No matches for "${query}".</div>
+          ` : html`
+            <ul class="adopt-list">
+              ${items.map((it) => html`
+                <li class=${`adopt-row${it.adopted ? ' is-adopted' : ''}`}
+                    key=${it.cliSessionId}>
+                  <div class="adopt-row-main">
+                    <div class="adopt-row-title">
+                      ${it.summary || html`<span class="adopt-row-untitled">untitled session</span>`}
+                    </div>
+                    <div class="adopt-row-meta">
+                      <span class="adopt-row-path mono" title=${it.cwd || ''}>${it.cwd || '—'}</span>
+                      <span class="adopt-row-dot">·</span>
+                      <span>${relTime(it.mtime)}</span>
+                      <span class="adopt-row-dot">·</span>
+                      <span class="adopt-row-id mono">${it.cliSessionId.slice(0, 8)}</span>
+                    </div>
                   </div>
-                  <div class="adopt-meta mono">
-                    ${it.cwd}
-                    <span class="adopt-sep">·</span>
-                    ${relTime(it.mtime)}
-                    <span class="adopt-sep">·</span>
-                    ${it.cliSessionId.slice(0, 8)}…
+                  <div class="adopt-row-actions">
+                    ${it.adopted ? html`
+                      <span class="adopt-row-badge">Imported</span>
+                    ` : html`
+                      <button type="button" class="action primary adopt-row-btn"
+                              disabled=${adopting === it.cliSessionId || !effectiveCliId}
+                              onClick=${() => adopt(it)}>
+                        ${adopting === it.cliSessionId ? 'Importing…' : 'Import'}
+                      </button>
+                    `}
                   </div>
-                </div>
-                <div class="adopt-actions">
-                  ${clis.length > 1 ? html`
-                    <select class="adopt-cli-select"
-                            value=${chosenCli[it.cliSessionId] || defaultCliFor(it.cliType)}
-                            onChange=${(e) => setChosenCli((m) => ({ ...m, [it.cliSessionId]: e.target.value }))}
-                            disabled=${it.adopted}>
-                      ${clis.map((c) => html`<option value=${c.id}>${c.name}</option>`)}
-                    </select>
-                  ` : null}
-                  ${it.adopted ? html`
-                    <span class="adopt-badge">Imported</span>
-                  ` : html`
-                    <button type="button" class="action primary adopt-btn"
-                            disabled=${adopting === it.cliSessionId}
-                            onClick=${() => adopt(it)}>
-                      ${adopting === it.cliSessionId ? 'Importing…' : 'Import'}
-                    </button>
-                  `}
-                </div>
-              </li>`)}
-          </ul>
-        `}
+                </li>`)}
+            </ul>
+          `}
+        </div>
       </div>
     </${Modal}>`;
 }
