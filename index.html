@@ -3,16 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#faf9f5">
+<meta name="theme-color" content="#ffffff">
 <title>CCSM</title>
 <link rel="icon" href="./favicon.svg" type="image/svg+xml">
 <link rel="manifest" href="./manifest.webmanifest">
 <style>
-  /* Tiny standalone styles — must look at-home with the per-version
-     frontends so transitions through the router don't flash a wildly
-     different page. */
+  /* Tiny standalone styles. The router is a transient redirect page —
+     keep it neutral white so it never flashes the per-frontend warm
+     theme between page transitions. The offline card itself still
+     uses accent-ish branding because it's user-facing UI, not a
+     transition. */
   :root {
-    --bg: #faf9f5; --bg-elev: #ffffff; --border: #e8e3d5;
+    --bg: #ffffff; --bg-elev: #ffffff; --border: #e5e5e5;
     --ink: #1a1815; --ink-mid: #4a4844; --ink-muted: #7a7872;
     --accent: #b3614a; --danger: #b73f3f;
   }
