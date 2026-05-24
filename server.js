@@ -4,73 +4,40 @@
 const path = require('node:path');
 const express = require('express');
 
-const { listSessions, listRecentSessions, findSessionMetadata } = require('./lib/sessions');
-const { listFavorites, addFavorite, removeFavorite, loadFavorites } = require('./lib/favorites');
-const { loadLabels, setLabel, removeLabel } = require('./lib/labels');
 const { loadConfig, saveConfig, DATA_DIR } = require('./lib/config');
-const {
-  saveSnapshot,
-  loadLatestSnapshot,
-  listSnapshotHistory,
-  loadSnapshotByFile,
-  restoreSnapshot,
-} = require('./lib/snapshot');
 const {
   listWorkspaces,
   findOrCreateWorkspace,
   ensureReposInWorkspace,
+  isInside,
+  dirSize,
 } = require('./lib/workspace');
-const {
-  launchNewClaude,
-  launchResume,
-  listTerminalKinds,
-  processNameFor,
-} = require('./lib/launcher');
-const {
-  focusByPid,
-  focusBySession,
-  snapshotWindowsOf,
-  focusNewlyOpenedHwnd,
-} = require('./lib/focus');
 const webTerminal = require('./lib/webTerminal');
+const persistedSessions = require('./lib/persistedSessions');
+const folders = require('./lib/folders');
+const cliSessionWatcher = require('./lib/cliSessionWatcher');
+const localCliSessions = require('./lib/localCliSessions');
 
-// One unified exit path so every reason-for-shutdown gets the same
-// cleanup: final snapshot save (so the next launch can restore current
-// state) + PTY children killed. Idempotent — concurrent triggers are no-ops.
+// One unified exit path: kill PTY children, then exit. v1.0 dropped the
+// snapshot-on-exit behaviour because the new persistedSessions store is
+// the source of truth (and is always on disk, not in memory).
 let shuttingDown = false;
 async function gracefulShutdown(reason) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`[ccsm] shutting down · ${reason}`);
-
-  // Final snapshot. Wrap in a race so a wedged disk doesn't hang us
-  // indefinitely — 2s is generous (typical save is <300ms).
+  // Mark all running sessions as exited (best-effort) so the next launch
+  // doesn't show stale "running" rows.
   try {
-    const cfg = await loadConfig();
-    await Promise.race([
-      saveSnapshot({ keep: cfg.snapshotHistoryKeep }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('save timeout (2s)')), 2000)),
-    ]);
-    console.log('[ccsm] final snapshot saved');
-  } catch (e) {
-    console.error('[ccsm] final snapshot skipped:', e.message);
-  }
-
-  // Kill any in-process PTY children so they don't outlive us.
+    const all = await persistedSessions.loadAll();
+    for (const s of all) {
+      if (s.status === 'running') {
+        await persistedSessions.markExited(s.id, null).catch(() => {});
+      }
+    }
+  } catch {}
   try { webTerminal.killAll(); } catch {}
-
   process.exit(0);
-}
-
-async function autoFocusAfterLaunch({ terminal, beforeHwnds, autoFocus }) {
-  if (!autoFocus) return;
-  try {
-    const processName = processNameFor(terminal);
-    if (!processName) return;
-    await focusNewlyOpenedHwnd(beforeHwnds, processName);
-  } catch (e) {
-    console.error('[auto-focus]', e.message);
-  }
 }
 
 const app = express();
@@ -101,7 +68,7 @@ app.use((req, res, next) => {
 // so a contributor can iterate without pushing to GH Pages; (b) hot-reload
 // SSE endpoint that watches public/ for changes. CCSM_NO_DEV=1 disables
 // both explicitly. In production (npm-installed), backend is API-only —
-// frontend lives at https://bakapiano.github.io/ccsm/v1/.
+// frontend lives at https://bakapiano.github.io/ccsm/ (router → per-version).
 const IS_DEV = !__dirname.includes(`${path.sep}node_modules${path.sep}`) && process.env.CCSM_NO_DEV !== '1';
 
 if (IS_DEV) {
@@ -118,7 +85,6 @@ if (IS_DEV) {
     res.flushHeaders();
     res.write(': connected\n\n');
     reloadClients.add(res);
-    // Heartbeat every 25s so intermediate proxies don't kill the stream.
     const hb = setInterval(() => { try { res.write(': ping\n\n'); } catch {} }, 25000);
     req.on('close', () => { clearInterval(hb); reloadClients.delete(res); });
   });
@@ -147,165 +113,453 @@ function asyncH(fn) {
   };
 }
 
-// ---- sessions ----
+// ---- helpers ----
 
-app.get('/api/sessions', asyncH(async (_req, res) => {
-  const sessions = await listSessions();
-  res.json({ sessions, takenAt: Date.now() });
-}));
+function pickCli(cfg, requestedId) {
+  const wanted = requestedId || cfg.defaultCliId;
+  return cfg.clis.find((c) => c.id === wanted) || cfg.clis[0];
+}
 
-app.get('/api/sessions/recent', asyncH(async (req, res) => {
-  const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 15));
-  const offset = Math.max(0, Number(req.query.offset) || 0);
-  const live = await listSessions();
-  const excludeIds = new Set(live.map((s) => s.sessionId));
-  const { recent, total } = await listRecentSessions({ limit, offset, excludeIds });
-  res.json({ recent, total, limit, offset, takenAt: Date.now() });
-}));
+// Resolve how to spawn a CLI command. Windows quirks:
+// v1.1 — spawn strategy is now caller-controlled via cli.shell:
+//   'direct' — pty.spawn(command, args). Real .exe / absolute paths only.
+//              Won't find pwsh aliases / functions.
+//   'pwsh'   — wrap in `pwsh.exe -NoLogo -NoExit -Command "& { cmd args }"`.
+//              Loads $PROFILE → pwsh aliases / functions (`ccp`, `cxp`) work.
+//              Falls back to powershell.exe (5.x) if pwsh.exe absent.
+//   'cmd'    — wrap in `cmd.exe /d /s /c "cmd args"`. Resolves doskey aliases
+//              and PATH-only names without pwsh dependency.
+function resolveCommand(commandRaw, userArgs = [], shell = 'direct') {
+  if (!commandRaw) throw new Error('cli.command is empty');
+  const cmd = commandRaw.replace(/^\.[\\\/]/, '');
 
-// ---- favorites ----
-// Sessions the user has starred. Stored at $DATA_DIR/favorites.json.
-// Frontend usually GETs once at boot and updates optimistically.
-app.get('/api/favorites', asyncH(async (_req, res) => {
-  const favorites = await listFavorites();
-  res.json({ favorites });
-}));
+  if (shell === 'pwsh') {
+    // Build a single -Command string so pwsh tokenizes args itself. The
+    // `& { ... }` wrapper makes pwsh execute the line as a script block —
+    // critical for functions (which aren't visible without invocation).
+    const joined = [cmd, ...userArgs.map(quoteForPwsh)].join(' ');
+    return {
+      exe: 'pwsh.exe',
+      prefixArgs: ['-NoLogo', '-NoExit', '-Command', `& { ${joined} }`],
+      fallbackExe: 'powershell.exe',
+      consumesUserArgs: true,
+    };
+  }
 
-app.post('/api/favorites/:sessionId', asyncH(async (req, res) => {
-  const sessionId = req.params.sessionId;
-  let info = req.body && typeof req.body === 'object' ? req.body : {};
-  // If client didn't supply title/cwd, try to look them up from the live
-  // session list or from the jsonl files on disk. This way star-from-empty
-  // (e.g. via API) still produces a usable favorite.
-  if (!info.cwd || !info.title) {
-    const live = await listSessions();
-    const livehit = live.find((s) => s.sessionId === sessionId);
-    if (livehit) {
-      info = { cwd: livehit.cwd, title: livehit.title, ...info };
-    } else {
-      const meta = await findSessionMetadata(sessionId);
-      if (meta) info = { cwd: meta.cwd, title: meta.title, gitBranch: meta.gitBranch, ...info };
+  if (shell === 'cmd') {
+    // /d skips AutoRun, /s preserves quoting, /c runs and exits.
+    const joined = [cmd, ...userArgs.map(quoteForCmd)].join(' ');
+    return {
+      exe: process.env.ComSpec || 'cmd.exe',
+      prefixArgs: ['/d', '/s', '/c', joined],
+      consumesUserArgs: true,
+    };
+  }
+
+  // shell === 'direct' — bare pty.spawn. Honour .cmd/.bat/.ps1 extensions
+  // when an absolute path was provided so they still work without an
+  // explicit shell choice.
+  if (path.isAbsolute(cmd)) {
+    const ext = path.extname(cmd).toLowerCase();
+    if (ext === '.cmd' || ext === '.bat') {
+      return { exe: process.env.ComSpec || 'cmd.exe', prefixArgs: ['/d', '/s', '/c', cmd], consumesUserArgs: false };
     }
+    if (ext === '.ps1') {
+      return { exe: 'powershell.exe', prefixArgs: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', cmd], consumesUserArgs: false };
+    }
+    return { exe: cmd, prefixArgs: [], consumesUserArgs: false };
   }
-  const fav = await addFavorite(sessionId, info);
-  res.json({ favorite: fav });
-}));
+  // Bare name with shell=direct: defer to cmd.exe so Windows resolves
+  // against PATH. Same behavior as before — preserves user expectations
+  // for `claude` / `codex` configs that don't set shell.
+  return { exe: process.env.ComSpec || 'cmd.exe', prefixArgs: ['/d', '/s', '/c', cmd], consumesUserArgs: false };
+}
 
-app.delete('/api/favorites/:sessionId', asyncH(async (req, res) => {
-  const removed = await removeFavorite(req.params.sessionId);
-  res.json({ removed });
-}));
+function quoteForPwsh(s) {
+  if (s === '' || /[\s'"`$]/.test(s)) return `'${String(s).replace(/'/g, "''")}'`;
+  return s;
+}
+function quoteForCmd(s) {
+  if (s === '' || /[\s"&|<>^]/.test(s)) return `"${String(s).replace(/"/g, '""')}"`;
+  return s;
+}
 
-// ---- labels (rename overrides) ----
-// Custom display titles keyed by sessionId. Empty body / empty label is
-// treated as a delete.
-app.get('/api/labels', asyncH(async (_req, res) => {
-  const labels = await loadLabels();
-  res.json({ labels });
-}));
-
-app.put('/api/labels/:sessionId', asyncH(async (req, res) => {
-  const label = req.body && req.body.label;
-  if (!label || !String(label).trim()) {
-    const removed = await removeLabel(req.params.sessionId);
-    return res.json({ removed });
+function spawnCliSession({ cli, cwd, sessionId, meta, extraArgs = [] }) {
+  if (!webTerminal.available) {
+    const e = new Error('node-pty unavailable · cannot spawn web terminal');
+    e.code = 'PTY_UNAVAILABLE';
+    throw e;
   }
-  const saved = await setLabel(req.params.sessionId, label);
-  res.json({ label: saved });
-}));
+  // For shell wrappers (pwsh/cmd) we need to bake BOTH cli.args and
+  // extraArgs into the single quoted command string — otherwise extraArgs
+  // would become args to the shell itself, not the wrapped command.
+  // Re-resolve here when extraArgs is present so the quoting is correct.
+  const resolved = resolveCommand(
+    cli.command,
+    [...(cli.args || []), ...extraArgs],
+    cli.shell || 'direct',
+  );
+  const { exe, prefixArgs, fallbackExe, consumesUserArgs } = resolved;
+  const args = consumesUserArgs
+    ? prefixArgs
+    : [...prefixArgs, ...(cli.args || []), ...extraArgs];
+  // Merge user-scope PATH from registry into the env we hand the PTY.
+  const env = { ...process.env, ...(cli.env || {}) };
+  if (mergedUserPath) env.PATH = mergedUserPath;
+  const trySpawn = (executable) => webTerminal.spawn({
+    id: sessionId,
+    command: executable,
+    args,
+    cwd,
+    env,
+    meta: { ...meta, cliId: cli.id, cliName: cli.name },
+    onData: () => { persistedSessions.touch(sessionId).catch(() => {}); },
+    onExit: ({ exitCode }) => {
+      stopWatcher(sessionId);
+      persistedSessions.markExited(sessionId, exitCode).catch(() => {});
+    },
+  });
+  try {
+    const entry = trySpawn(exe);
+    maybeWatchCliSessionId({ cli, cwd, ccsmSessionId: sessionId });
+    return entry;
+  } catch (e) {
+    if (fallbackExe && /ENOENT|cannot find|not recognized/i.test(String(e && e.message || e))) {
+      const entry = trySpawn(fallbackExe);
+      maybeWatchCliSessionId({ cli, cwd, ccsmSessionId: sessionId });
+      return entry;
+    }
+    throw e;
+  }
+}
 
-app.delete('/api/labels/:sessionId', asyncH(async (req, res) => {
-  const removed = await removeLabel(req.params.sessionId);
-  res.json({ removed });
-}));
+// Start a fs-watch on the CLI's transcript directory so we can capture
+// the upstream session UUID for later precise --resume. Only kicks off
+// for CLI types we know how to watch (claude / codex / copilot).
+//
+// If the watcher times out (5 min with no transcript ever written), we
+// assume the user closed the CLI before it persisted anything — so
+// there's nothing to resume to and the ccsm record is dead weight. Drop
+// the persistedSessions row and kill the PTY if it somehow lingers.
+//
+// IMPORTANT: if the record already has a captured cliSessionId (typical
+// for `resume` and for `adopt`-imported records), skip the watcher
+// entirely — there's nothing left to capture, and the timeout-cleanup
+// would otherwise wipe a perfectly good record after 5 minutes of
+// "no new transcript".
+// Active upstream-session-id watchers, keyed by ccsm session id. We hold
+// onto the cleanup fn returned by cliSessionWatcher so we can tear them
+// down when the PTY exits or the record is deleted — a still-running
+// watcher whose ccsm session is gone would otherwise match a *future*
+// session that happens to spawn in the same cwd and stamp the wrong id
+// onto a dead record (or worse, onto a re-created record reusing memory).
+const activeWatchers = new Map(); // ccsmSessionId → cleanupFn
+
+function stopWatcher(ccsmSessionId) {
+  const cleanup = activeWatchers.get(ccsmSessionId);
+  if (!cleanup) return;
+  activeWatchers.delete(ccsmSessionId);
+  try { cleanup(); } catch {}
+}
+
+async function maybeWatchCliSessionId({ cli, cwd, ccsmSessionId }) {
+  if (!cli || !['claude', 'codex', 'copilot'].includes(cli.type)) return;
+  // If a previous watcher was still alive on this id (e.g. fast restart),
+  // tear it down first.
+  stopWatcher(ccsmSessionId);
+  try {
+    const existing = await persistedSessions.get(ccsmSessionId);
+    if (existing?.cliSessionId) {
+      console.log(`[cliSessionId] skip watcher · ${cli.type} session already known (${existing.cliSessionId})`);
+      return;
+    }
+  } catch {}
+  const cleanup = cliSessionWatcher.captureSessionId({
+    cliType: cli.type,
+    cwd,
+    onCapture: (cliSessionId) => {
+      activeWatchers.delete(ccsmSessionId);
+      persistedSessions.update(ccsmSessionId, { cliSessionId }).catch((e) => {
+        console.error('[cliSessionId] save failed:', e.message);
+      });
+      console.log(`[cliSessionId] captured ${cli.type} session ${cliSessionId} for ccsm ${ccsmSessionId}`);
+    },
+    onTimeout: () => {
+      activeWatchers.delete(ccsmSessionId);
+      console.warn(`[cliSessionId] timeout · removing ccsm session ${ccsmSessionId} (no ${cli.type} transcript)`);
+      try { webTerminal.kill(ccsmSessionId); } catch {}
+      persistedSessions.remove(ccsmSessionId).catch((e) => {
+        console.error('[cliSessionId] remove failed:', e.message);
+      });
+    },
+  });
+  if (cleanup) activeWatchers.set(ccsmSessionId, cleanup);
+}
+
+// Read user PATH from registry once at boot, prepend to process PATH.
+// On platforms other than Windows or if the read fails, fall back to
+// process.env.PATH unchanged.
+let mergedUserPath = null;
+function buildMergedUserPath() {
+  if (process.platform !== 'win32') return process.env.PATH;
+  try {
+    const { spawnSync } = require('node:child_process');
+    const r = spawnSync('reg.exe', ['query', 'HKCU\\Environment', '/v', 'PATH'], { encoding: 'utf8', windowsHide: true });
+    if (r.status !== 0 || !r.stdout) return process.env.PATH;
+    const line = r.stdout.split(/\r?\n/).find((l) => /\bPATH\b/i.test(l) && /REG_(EXPAND_)?SZ/i.test(l));
+    if (!line) return process.env.PATH;
+    const m = line.match(/REG_(?:EXPAND_)?SZ\s+(.+)$/);
+    if (!m) return process.env.PATH;
+    // Expand %VAR% references manually (REG_EXPAND_SZ keeps them literal).
+    const userPath = m[1].replace(/%([^%]+)%/g, (_, name) => process.env[name] || '');
+    const existing = (process.env.PATH || '').split(';').map((s) => s.trim()).filter(Boolean);
+    const adds = userPath.split(';').map((s) => s.trim()).filter(Boolean);
+    const merged = [];
+    const seen = new Set();
+    for (const p of [...adds, ...existing]) {
+      const k = p.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      merged.push(p);
+    }
+    return merged.join(';');
+  } catch {
+    return process.env.PATH;
+  }
+}
+mergedUserPath = buildMergedUserPath();
 
 // ---- config ----
 
+// Per-CLI install probe. Looks up the command on PATH using `where` (win)
+// or `which` (posix). Result is cached forever — restart ccsm after
+// installing/uninstalling a CLI to refresh. Cheap (10ms cold, 0ms cached).
+const cliProbeCache = new Map();
+function probeCli(command) {
+  if (!command) return null;
+  if (cliProbeCache.has(command)) return cliProbeCache.get(command);
+  const { spawnSync } = require('node:child_process');
+  let resolvedPath = null;
+  try {
+    const isWin = process.platform === 'win32';
+    const cmd = isWin ? 'where.exe' : 'which';
+    const env = { ...process.env };
+    if (mergedUserPath) env.PATH = mergedUserPath;
+    const r = spawnSync(cmd, [command], { encoding: 'utf8', windowsHide: true, env });
+    if (r.status === 0 && r.stdout) {
+      resolvedPath = r.stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)[0] || null;
+    }
+  } catch {}
+  cliProbeCache.set(command, resolvedPath);
+  return resolvedPath;
+}
+
+function decorateConfigWithProbes(cfg) {
+  return {
+    ...cfg,
+    clis: (cfg.clis || []).map((c) => {
+      const path = probeCli(c.command);
+      return { ...c, installed: !!path, installPath: path };
+    }),
+  };
+}
+
 app.get('/api/config', asyncH(async (_req, res) => {
-  res.json(await loadConfig());
+  res.json(decorateConfigWithProbes(await loadConfig()));
 }));
 
 app.put('/api/config', asyncH(async (req, res) => {
   const cfg = await saveConfig(req.body || {});
-  res.json(cfg);
+  res.json(decorateConfigWithProbes(cfg));
 }));
 
-// ---- snapshot ----
+// ---- CLIs ----
+// ---- folders ----
 
-app.get('/api/snapshot', asyncH(async (_req, res) => {
-  const snap = await loadLatestSnapshot();
-  res.json({ snapshot: snap });
+app.get('/api/folders', asyncH(async (_req, res) => {
+  const list = await folders.loadAll();
+  list.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  res.json({ folders: list });
 }));
 
-app.post('/api/snapshot', asyncH(async (_req, res) => {
-  const cfg = await loadConfig();
-  const snap = await saveSnapshot({ keep: cfg.snapshotHistoryKeep });
-  res.json({ snapshot: snap });
+app.post('/api/folders', asyncH(async (req, res) => {
+  const name = req.body && req.body.name;
+  if (!name) return res.status(400).json({ error: 'name required' });
+  res.json({ folder: await folders.create({ name }) });
 }));
 
-app.get('/api/snapshot/history', asyncH(async (_req, res) => {
-  res.json({ history: await listSnapshotHistory() });
+app.put('/api/folders/:id', asyncH(async (req, res) => {
+  const updated = await folders.update(req.params.id, req.body || {});
+  if (!updated) return res.status(404).json({ error: 'not found' });
+  res.json({ folder: updated });
 }));
 
-app.post('/api/snapshot/restore', asyncH(async (req, res) => {
-  let snap;
-  if (req.body && req.body.file) {
-    snap = await loadSnapshotByFile(req.body.file);
-  } else {
-    snap = await loadLatestSnapshot();
+app.delete('/api/folders/:id', asyncH(async (req, res) => {
+  // Move all sessions in this folder to Unsorted before delete.
+  const all = await persistedSessions.loadAll();
+  for (const s of all) {
+    if (s.folderId === req.params.id) {
+      await persistedSessions.setFolder(s.id, null);
+    }
   }
-  if (!snap) return res.status(404).json({ error: 'no snapshot to restore' });
-  const cfg = await loadConfig();
-  const beforeHwnds = await snapshotWindowsOf(
-    processNameFor(cfg.terminal) || 'WindowsTerminal.exe'
-  );
-  const result = restoreSnapshot(snap, {
-    terminal: cfg.terminal,
-    claudeCommand: cfg.claudeCommand,
-      commandShell: cfg.commandShell || "pwsh",
-  });
-  // For N restored windows we just focus the last one to surface restore-happened
-  // without strobing focus through all N.
-  autoFocusAfterLaunch({
-    terminal: cfg.terminal,
-    beforeHwnds,
-    autoFocus: cfg.autoFocusOnLaunch !== false,
-  });
-  res.json({ restored: result, takenAt: snap.takenAt, count: snap.sessions.length });
+  const removed = await folders.remove(req.params.id);
+  res.json({ removed });
+}));
+
+app.post('/api/folders/reorder', asyncH(async (req, res) => {
+  const ids = req.body && req.body.ids;
+  if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids array required' });
+  const next = await folders.reorder(ids);
+  res.json({ folders: next });
+}));
+
+// ---- sessions (persisted, ccsm-owned) ----
+
+app.get('/api/sessions', asyncH(async (_req, res) => {
+  const list = await persistedSessions.loadAll();
+  // Cross-check status against live PTY pool so a stale "running" record
+  // doesn't survive a server restart.
+  const live = new Set(webTerminal.list().filter((t) => !t.exitedAt).map((t) => t.id));
+  for (const s of list) {
+    if (s.status === 'running' && !live.has(s.id)) {
+      s.status = 'exited';
+    }
+  }
+  res.json({ sessions: list, takenAt: Date.now() });
+}));
+
+app.put('/api/sessions/:id', asyncH(async (req, res) => {
+  const patch = {};
+  if (typeof req.body.title === 'string') patch.title = req.body.title;
+  if ('folderId' in (req.body || {})) patch.folderId = req.body.folderId || null;
+  const updated = await persistedSessions.update(req.params.id, patch);
+  if (!updated) return res.status(404).json({ error: 'not found' });
+  res.json({ session: updated });
+}));
+
+app.delete('/api/sessions/:id', asyncH(async (req, res) => {
+  // Kill PTY first if it's still alive, then drop the record.
+  stopWatcher(req.params.id);
+  try { webTerminal.kill(req.params.id); } catch {}
+  const removed = await persistedSessions.remove(req.params.id);
+  res.json({ removed });
 }));
 
 // ---- workspaces ----
 
+// ---- directory browser ----
+// Lets the launch picker walk the filesystem so users can pick any
+// existing directory as the session cwd. Returns the immediate child
+// dirs of `path` (defaults to home), plus a few hardcoded "starts"
+// (home, workDir, drive roots on Windows).
+app.get('/api/browse', asyncH(async (req, res) => {
+  const fs = require('node:fs/promises');
+  const os = require('node:os');
+  const target = req.query.path ? path.resolve(String(req.query.path)) : os.homedir();
+  let entries = [];
+  let exists = true;
+  try {
+    const list = await fs.readdir(target, { withFileTypes: true });
+    entries = list
+      .filter((d) => d.isDirectory() && !d.name.startsWith('.'))
+      .map((d) => ({ name: d.name, path: path.join(target, d.name) }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  } catch (e) {
+    exists = false;
+  }
+  const parent = path.dirname(target);
+  const cfg = await loadConfig();
+  const starts = [
+    { label: 'Home', path: os.homedir() },
+    { label: 'Work dir', path: cfg.workDir },
+  ];
+  if (process.platform === 'win32') {
+    // Best-effort drive enumeration so users on D:\ etc can hop roots.
+    for (const letter of ['C', 'D', 'E', 'F', 'G', 'H']) {
+      const root = `${letter}:\\`;
+      try { await fs.access(root); starts.push({ label: `${letter}:\\`, path: root }); }
+      catch {}
+    }
+  }
+  res.json({
+    path: target,
+    parent: parent === target ? null : parent,
+    exists,
+    entries,
+    starts,
+  });
+}));
+
 app.get('/api/workspaces', asyncH(async (_req, res) => {
   const cfg = await loadConfig();
+  // listWorkspaces calls into the old "in use = ~/.claude/sessions cwd
+  // matches workspace path" logic; we just want the directory listing
+  // now, so pass empty busy paths.
   const workspaces = await listWorkspaces({
     workDir: cfg.workDir,
     repos: cfg.repos,
   });
+  // Recompute inUse based on persistedSessions instead. A workspace is
+  // in use iff any RUNNING ccsm session lives at-or-inside it.
+  const allSess = await persistedSessions.loadAll();
+  const busy = new Set(
+    allSess.filter((s) => s.status === 'running').map((s) => path.resolve(s.cwd).toLowerCase())
+  );
+  for (const w of workspaces) {
+    w.inUse = busy.has(path.resolve(w.path).toLowerCase());
+    w.sessionsHere = allSess
+      .filter((s) => s.status === 'running' && path.resolve(s.cwd).toLowerCase() === path.resolve(w.path).toLowerCase())
+      .map((s) => s.id);
+  }
+  // Compute sizes in parallel. Cheap on the typical workspace
+  // (a few repo clones) and the page is opened infrequently.
+  await Promise.all(workspaces.map(async (w) => {
+    try { w.size = await dirSize(w.path); }
+    catch { w.size = null; }
+  }));
   res.json({ workDir: cfg.workDir, repos: cfg.repos, workspaces });
 }));
 
+// Delete a workspace directory. Refuses if any RUNNING session lives
+// inside it, or if the resolved path escapes workDir. The name comes
+// from the URL — we resolve it against workDir and verify containment.
+app.delete('/api/workspaces/:name', asyncH(async (req, res) => {
+  const fsp = require('node:fs/promises');
+  const cfg = await loadConfig();
+  const name = String(req.params.name || '');
+  // Reject anything that tries to escape via separators / traversal.
+  if (!name || /[\\/]|^\.\.$|^\.$/.test(name)) {
+    return res.status(400).json({ error: 'invalid workspace name' });
+  }
+  const target = path.resolve(cfg.workDir, name);
+  if (!isInside(target, cfg.workDir) || path.resolve(target) === path.resolve(cfg.workDir)) {
+    return res.status(400).json({ error: 'workspace must live under workDir' });
+  }
+  try {
+    const st = await fsp.stat(target);
+    if (!st.isDirectory()) return res.status(400).json({ error: 'not a directory' });
+  } catch {
+    return res.status(404).json({ error: 'workspace not found' });
+  }
+  const allSess = await persistedSessions.loadAll();
+  const inUse = allSess.some((s) =>
+    s.status === 'running' && isInside(s.cwd, target)
+  );
+  if (inUse) return res.status(409).json({ error: 'workspace is in use by a running session' });
+  await fsp.rm(target, { recursive: true, force: true });
+  res.json({ ok: true });
+}));
+
 // ---- new session ----
-// body: { repos: ["repo-a","repo-b"], workspace?: "ws-2" (override), launch?: true }
-// Streams NDJSON: one JSON object per line. Event types:
-//   {type:"workspace", workspace, created}
-//   {type:"clone-start", repo}
-//   {type:"clone-progress", repo, phase, percent, current, total, detail}
-//   {type:"clone-line", repo, line}            (raw git line, when no progress)
-//   {type:"clone-done", repo, action, path}
-//   {type:"clone-error", repo, error}
-//   {type:"launched", launched}
-//   {type:"done", success, error?}
+// body: { cliId?, repos?, workspace?, folderId?, launch?: true }
+// Streams NDJSON: workspace / clone-* / launched / done.
 app.post('/api/sessions/new', async (req, res) => {
   res.setHeader('Content-Type', 'application/x-ndjson');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('X-Accel-Buffering', 'no');
-  // Disable response compression buffering — flush right away.
   if (typeof res.flushHeaders === 'function') res.flushHeaders();
 
-  const emit = (obj) => {
-    res.write(JSON.stringify(obj) + '\n');
-  };
+  const emit = (obj) => { res.write(JSON.stringify(obj) + '\n'); };
   const fail = (msg, extra) => {
     emit({ type: 'done', success: false, error: msg, ...extra });
     res.end();
@@ -313,30 +567,38 @@ app.post('/api/sessions/new', async (req, res) => {
 
   try {
     const cfg = await loadConfig();
+    const cli = pickCli(cfg, req.body && req.body.cliId);
+    if (!cli) return fail('No CLI configured. Add one in Configure → CLIs.');
+
     const explicitRepos = Array.isArray(req.body && req.body.repos);
     const wantedNames = explicitRepos
       ? req.body.repos
       : cfg.repos.filter((r) => r.defaultSelected).map((r) => r.name);
-
     const wantedRepos = cfg.repos.filter((r) => wantedNames.includes(r.name));
-    // Allow launching with zero repos — caller explicitly passed [] (or no
-    // defaults exist). The workspace is still created; claude just opens
-    // in an empty directory.
     if (wantedRepos.length === 0 && !explicitRepos && wantedNames.length > 0) {
       return fail('No matching repos found');
     }
 
     let workspace;
     let created = false;
-    if (req.body && req.body.workspace) {
+    // Three cwd modes:
+    //   1. body.cwd      — user picked an existing directory; skip clone.
+    //   2. body.workspace — reuse a named workspace under workDir.
+    //   3. (neither)     — auto-allocate a fresh ws-N.
+    if (req.body && req.body.cwd) {
+      const fsmod = require('node:fs/promises');
+      const cwd = path.resolve(String(req.body.cwd));
+      try {
+        const st = await fsmod.stat(cwd);
+        if (!st.isDirectory()) return fail(`${cwd} is not a directory`);
+      } catch {
+        return fail(`directory not found: ${cwd}`);
+      }
+      workspace = { name: path.basename(cwd) || cwd, path: cwd };
+    } else if (req.body && req.body.workspace) {
       const all = await listWorkspaces({ workDir: cfg.workDir, repos: cfg.repos });
       workspace = all.find((w) => w.name === req.body.workspace);
       if (!workspace) return fail(`workspace ${req.body.workspace} not found`);
-      if (workspace.inUse) {
-        return fail(
-          `workspace ${workspace.name} is in use by ${workspace.sessionsHere.length} session(s)`
-        );
-      }
     } else {
       const r = await findOrCreateWorkspace({
         workDir: cfg.workDir,
@@ -348,87 +610,53 @@ app.post('/api/sessions/new', async (req, res) => {
     }
     emit({ type: 'workspace', workspace, created });
 
-    const cloneResults = await ensureReposInWorkspace({
+    // Skip clone entirely when user picked an existing directory — we
+    // don't want to dump random repos into someone's project.
+    const cloneResults = (req.body && req.body.cwd) ? [] : await ensureReposInWorkspace({
       workspacePath: workspace.path,
       repos: wantedRepos,
       onRepoStart: (repo) =>
         emit({ type: 'clone-start', repo: repo.name, url: repo.url }),
       onProgress: (repo, p) =>
-        emit({
-          type: 'clone-progress',
-          repo: repo.name,
-          phase: p.phase,
-          percent: p.percent,
-          current: p.current,
-          total: p.total,
-          detail: p.detail,
-        }),
+        emit({ type: 'clone-progress', repo: repo.name, ...p }),
       onLine: (repo, line) =>
         emit({ type: 'clone-line', repo: repo.name, line }),
       onRepoEnd: (repo, result) =>
         emit({ type: 'clone-end', repo: repo.name, ...result }),
     });
-
     const failed = cloneResults.filter((r) => !r.ok);
-    if (failed.length > 0) {
-      return fail('Some repos failed to clone', { cloneResults });
-    }
+    if (failed.length > 0) return fail('Some repos failed to clone', { cloneResults });
 
     const shouldLaunch = req.body && req.body.launch !== false;
     let launched = null;
     if (shouldLaunch) {
-      // mode = 'web' → spawn the claude command as an in-process PTY whose
-      //                stdio is bridged to xterm.js via WebSocket. The session
-      //                lives in webTerminal's pool until killed or claude
-      //                exits. No wt window opens.
-      // mode = 'wt' (default) → existing behaviour: launch via wt window.
-      const mode = req.body && req.body.terminal === 'web' ? 'web' : 'wt';
-
-      if (mode === 'web') {
-        if (!webTerminal.available) {
-          return fail('node-pty is not installed · web terminal mode unavailable');
-        }
-        // Wrap in pwsh so config.claudeCommand can be an alias / function
-        // defined in the user's profile (e.g. `cc`), same trick wt uses.
-        const cmd = cfg.claudeCommand || 'claude';
-        const wrap = (cfg.commandShell || 'pwsh') === 'powershell' ? 'powershell.exe' : 'pwsh.exe';
-        const entry = webTerminal.spawn({
-          command: wrap,
-          args: ['-NoExit', '-NoLogo', '-Command', `Set-Location -LiteralPath '${workspace.path.replace(/'/g, "''")}'; & '${cmd.replace(/'/g, "''")}'`],
+      // Create the persistedSessions record FIRST so spawnCliSession can
+      // use its id as the PTY id (matching ids simplify resume/attach).
+      const record = await persistedSessions.create({
+        cliId: cli.id,
+        cwd: workspace.path,
+        workspace: workspace.name,
+        repos: wantedRepos.map((r) => r.name),
+        folderId: (req.body && req.body.folderId) || null,
+        title: '',
+      });
+      try {
+        const entry = spawnCliSession({
+          cli,
           cwd: workspace.path,
+          sessionId: record.id,
           meta: { title: workspace.name, workspace: workspace.name, cwd: workspace.path },
         });
-        launched = { mode: 'web', id: entry.id, pid: entry.meta.pid, terminal: 'web' };
+        await persistedSessions.markRunning(record.id, entry.meta.pid);
+        launched = { id: record.id, pid: entry.meta.pid, cliId: cli.id };
         emit({ type: 'launched', launched });
-      } else {
-        const beforeHwnds = await snapshotWindowsOf(
-          processNameFor(cfg.terminal) || 'WindowsTerminal.exe'
-        );
-        launched = launchNewClaude({
-          cwd: workspace.path,
-          title: workspace.name,
-          terminal: cfg.terminal,
-          claudeCommand: cfg.claudeCommand,
-          commandShell: cfg.commandShell || 'pwsh',
-        });
-        launched = { mode: 'wt', ...launched };
-        emit({ type: 'launched', launched });
-        autoFocusAfterLaunch({
-          terminal: cfg.terminal,
-          beforeHwnds,
-          autoFocus: cfg.autoFocusOnLaunch !== false,
-        });
+      } catch (e) {
+        await persistedSessions.markExited(record.id, null);
+        return fail(`spawn failed: ${e.message}`);
       }
     }
 
-    emit({
-      type: 'done',
-      success: true,
-      workspace,
-      created,
-      cloneResults,
-      launched,
-    });
+    emit({ type: 'done', success: true, workspace, created, cloneResults, launched });
     res.end();
   } catch (e) {
     console.error('[/api/sessions/new]', e);
@@ -436,130 +664,133 @@ app.post('/api/sessions/new', async (req, res) => {
   }
 });
 
-// ---- launch finder session (a claude session in the ccsm data dir pre-pointed at session data) ----
-app.post('/api/sessions/finder', asyncH(async (req, res) => {
-  const cfg = await loadConfig();
-  const mode = (req.body && req.body.terminal)
-    || cfg.defaultTerminalMode
-    || 'wt';
-  if (mode === 'web') {
-    if (!webTerminal.available) {
-      return res.status(400).json({ error: 'node-pty unavailable · cannot launch finder in web terminal' });
-    }
-    const cmd = cfg.claudeCommand || 'claude';
-    const wrap = (cfg.commandShell || 'pwsh') === 'powershell' ? 'powershell.exe' : 'pwsh.exe';
-    const promptArg = cfg.finderPrompt ? ` '${cfg.finderPrompt.replace(/'/g, "''")}'` : '';
-    const entry = webTerminal.spawn({
-      command: wrap,
-      args: ['-NoExit', '-NoLogo', '-Command', `Set-Location -LiteralPath '${DATA_DIR.replace(/'/g, "''")}'; & '${cmd.replace(/'/g, "''")}'${promptArg}`],
-      cwd: DATA_DIR,
-      meta: { title: 'ccsm finder', cwd: DATA_DIR },
-    });
-    return res.json({ launched: { mode: 'web', id: entry.id, pid: entry.meta.pid, terminal: 'web' }, cwd: DATA_DIR, prompt: cfg.finderPrompt });
+// ---- list local CLI sessions discovered on disk (for "adopt") ----
+// Returns sessions found in ~/.claude / ~/.codex / ~/.copilot that
+// aren't yet adopted by ccsm. Frontend uses this in the Import modal.
+app.get('/api/cli-sessions/:cliType', asyncH(async (req, res) => {
+  const type = String(req.params.cliType || '').toLowerCase();
+  if (!['claude', 'codex', 'copilot'].includes(type)) {
+    return res.status(400).json({ error: `unsupported cli type: ${type}` });
   }
-  const beforeHwnds = await snapshotWindowsOf(processNameFor(cfg.terminal) || 'WindowsTerminal.exe');
-  const launched = launchNewClaude({
-    cwd: DATA_DIR,
-    title: 'ccsm finder',
-    extraArgs: cfg.finderPrompt ? [cfg.finderPrompt] : [],
-    terminal: cfg.terminal,
-    claudeCommand: cfg.claudeCommand,
-    commandShell: cfg.commandShell || 'pwsh',
-  });
-  autoFocusAfterLaunch({
-    terminal: cfg.terminal,
-    beforeHwnds,
-    autoFocus: cfg.autoFocusOnLaunch !== false,
-  });
-  res.json({ launched: { mode: 'wt', ...launched }, cwd: DATA_DIR, prompt: cfg.finderPrompt });
+  const [discovered, adopted] = await Promise.all([
+    localCliSessions.listForType(type),
+    persistedSessions.loadAll(),
+  ]);
+  const adoptedIds = new Set(adopted.map((s) => s.cliSessionId).filter(Boolean));
+  const items = discovered
+    .map((s) => ({ ...s, adopted: adoptedIds.has(s.cliSessionId) }))
+    .sort((a, b) => b.mtime - a.mtime);
+  res.json({ sessions: items });
 }));
 
-// ---- resume single session ----
-app.post('/api/sessions/:sessionId/resume', asyncH(async (req, res) => {
-  const sessionId = req.params.sessionId;
-  const cwd = req.body && req.body.cwd;
-  if (!cwd) return res.status(400).json({ error: 'cwd required in body' });
-  const cfg = await loadConfig();
-  const mode = (req.body && req.body.terminal)
-    || cfg.defaultTerminalMode
-    || 'wt';
-  if (mode === 'web') {
-    if (!webTerminal.available) {
-      return res.status(400).json({ error: 'node-pty unavailable · cannot resume in web terminal' });
-    }
-    const cmd = cfg.claudeCommand || 'claude';
-    const wrap = (cfg.commandShell || 'pwsh') === 'powershell' ? 'powershell.exe' : 'pwsh.exe';
-    const entry = webTerminal.spawn({
-      command: wrap,
-      args: ['-NoExit', '-NoLogo', '-Command', `Set-Location -LiteralPath '${cwd.replace(/'/g, "''")}'; & '${cmd.replace(/'/g, "''")}' --resume '${sessionId.replace(/'/g, "''")}'`],
-      cwd,
-      meta: { title: `resume ${sessionId.slice(0, 8)}`, cwd, sessionId },
-    });
-    return res.json({ launched: { mode: 'web', id: entry.id, pid: entry.meta.pid, terminal: 'web' } });
+// ---- adopt: create a ccsm record pointing at an existing CLI session ----
+// Body: { cliId, cliSessionId, cwd, title?, folderId? }
+// Doesn't spawn — the new entry shows up as "exited" in the sidebar;
+// clicking it kicks off the regular resume flow which uses
+// `cli.resumeIdArgs` ('--resume <id>') so the upstream session reattaches.
+app.post('/api/sessions/adopt', asyncH(async (req, res) => {
+  const { cliId, cliSessionId, cwd, title, folderId } = req.body || {};
+  if (!cliId || !cliSessionId || !cwd) {
+    return res.status(400).json({ error: 'cliId, cliSessionId and cwd required' });
   }
-  const beforeHwnds = await snapshotWindowsOf(processNameFor(cfg.terminal) || 'WindowsTerminal.exe');
-  const launched = launchResume({
-    cwd,
-    sessionId,
-    terminal: cfg.terminal,
-    claudeCommand: cfg.claudeCommand,
-      commandShell: cfg.commandShell || "pwsh",
-  });
-  autoFocusAfterLaunch({
-    terminal: cfg.terminal,
-    beforeHwnds,
-    autoFocus: cfg.autoFocusOnLaunch !== false,
-  });
-  res.json({ launched: { mode: 'wt', ...launched } });
-}));
-
-// ---- focus the wt window that's already hosting this session ----
-app.post('/api/sessions/:sessionId/focus', asyncH(async (req, res) => {
-  const sessionId = req.params.sessionId;
-  const sessions = await listSessions();
-  const s = sessions.find((x) => x.sessionId === sessionId);
-  if (!s) return res.status(404).json({ error: `session ${sessionId} not live` });
   const cfg = await loadConfig();
-  const result = await focusBySession({
-    pid: s.pid,
-    sessionId: s.sessionId,
-    title: s.title,
-    cwd: s.cwd,
-    moveToCenter: !!cfg.focusMovesToCenter,
+  const cli = pickCli(cfg, cliId);
+  if (!cli) return res.status(400).json({ error: `CLI ${cliId} not configured` });
+
+  // Normalize the cwd up front. /api/sessions/new also resolves cwd, and
+  // the workspaces "in use" check (GET /api/workspaces) does
+  // path.resolve(s.cwd).toLowerCase() — adopted records must match the
+  // same shape, otherwise an adopted+running session leaves its
+  // workspace falsely marked as free and a fresh launch could collide.
+  const resolvedCwd = path.resolve(cwd);
+  try {
+    const fsmod = require('node:fs/promises');
+    const st = await fsmod.stat(resolvedCwd);
+    if (!st.isDirectory()) {
+      return res.status(400).json({ error: `cwd is not a directory: ${resolvedCwd}` });
+    }
+  } catch (e) {
+    return res.status(400).json({ error: `cwd not found: ${resolvedCwd}` });
+  }
+
+  // Refuse duplicates: if any ccsm record already owns this upstream
+  // session id, return it so the caller can jump to it.
+  const all = await persistedSessions.loadAll();
+  const dup = all.find((s) => s.cliSessionId === cliSessionId);
+  if (dup) return res.json({ session: dup, alreadyAdopted: true });
+
+  const workspace = path.basename(resolvedCwd) || resolvedCwd;
+  // Create directly with status='exited' + cliSessionId set, so a
+  // concurrent GET /api/sessions can never observe a "running but no
+  // PTY" intermediate state.
+  const record = await persistedSessions.create({
+    cliId,
+    cwd: resolvedCwd,
+    workspace,
+    folderId: folderId || null,
+    title: title || '',
+    repos: [],
+    status: 'exited',
+    cliSessionId,
   });
-  res.json({ session: { pid: s.pid, sessionId: s.sessionId, cwd: s.cwd, title: s.title }, ...result });
+  res.json({ session: record, alreadyAdopted: false });
 }));
 
-// ---- terminal kinds ----
-app.get('/api/terminals', (_req, res) => res.json({ terminals: listTerminalKinds() }));
+// ---- resume a previous session in the same cwd / cli ----
+app.post('/api/sessions/:id/resume', asyncH(async (req, res) => {
+  const record = await persistedSessions.get(req.params.id);
+  if (!record) return res.status(404).json({ error: 'session not found' });
+  // Already running and attached → no-op, just return its id.
+  const live = webTerminal.get(record.id);
+  if (live && !live.exitedAt) {
+    return res.json({ launched: { id: record.id, pid: live.meta.pid, cliId: record.cliId } });
+  }
+  const cfg = await loadConfig();
+  const cli = pickCli(cfg, record.cliId);
+  if (!cli) return res.status(400).json({ error: `CLI ${record.cliId} no longer configured` });
+  try {
+    // Prefer precise --resume <cliSessionId> when we have one captured;
+    // fall back to cli.resumeArgs (--continue / resume --last) otherwise.
+    const extraArgs = buildResumeArgs(cli, record);
+    const entry = spawnCliSession({
+      cli,
+      cwd: record.cwd,
+      sessionId: record.id,
+      meta: { title: record.title || record.workspace, workspace: record.workspace, cwd: record.cwd },
+      extraArgs,
+    });
+    await persistedSessions.markRunning(record.id, entry.meta.pid);
+    res.json({ launched: { id: record.id, pid: entry.meta.pid, cliId: cli.id } });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+}));
 
-// ---- capabilities probe · used by the frontend to decide whether to show
-// the "open in this page" radio option. node-pty is optional, install-failure
-// degrades us to wt-only. ----
+// Build the args appended on resume:
+//   When ccsm has captured the upstream CLI's session UUID and the CLI
+//   defines `resumeIdArgs` (e.g. ['--resume', '<id>']), we substitute the
+//   <id> placeholder and use those for a precise resume. Otherwise we
+//   fall back to `cli.resumeArgs` (e.g. ['--continue']).
+function buildResumeArgs(cli, record) {
+  const id = record.cliSessionId;
+  const tpl = Array.isArray(cli.resumeIdArgs) ? cli.resumeIdArgs : [];
+  if (id && tpl.length > 0) {
+    return tpl.map((a) => (typeof a === 'string' ? a.replace(/<id>/g, id) : a));
+  }
+  return Array.isArray(cli.resumeArgs) ? cli.resumeArgs : [];
+}
+
+// ---- capabilities probe ----
 app.get('/api/capabilities', (_req, res) => res.json({
   webTerminal: webTerminal.available,
   webTerminalError: webTerminal.available ? null : String(webTerminal.loadError?.message || 'unavailable'),
 }));
-
-// ---- web terminals · list / kill ----
-// (creation happens through /api/sessions/new with terminal:'web'; attach is
-// over WebSocket below.)
-app.get('/api/sessions/web', (_req, res) => res.json({ terminals: webTerminal.list() }));
-
-app.delete('/api/sessions/web/:id', (req, res) => {
-  const ok = webTerminal.kill(req.params.id);
-  res.json({ killed: ok });
-});
 
 // ---- health ----
 const pkg = require('./package.json');
 app.get('/api/health', (_req, res) => res.json({ ok: true, pid: process.pid, version: pkg.version, name: pkg.name }));
 
 // ---- lifecycle ----
-// State shared by /api/spawn-browser (opens another window into this server)
-// and the heartbeat watchdog (exits the server if no client has pinged for
-// HEARTBEAT_TIMEOUT_MS). Heartbeat is the safety net behind the primary
-// "browser child exits → server exits" mechanism wired up after listen.
 let currentPort = 0;
 let frontendUrl = '';
 let lastHeartbeat = Date.now();
@@ -573,41 +804,153 @@ app.post('/api/heartbeat', (_req, res) => {
 });
 
 app.post('/api/spawn-browser', asyncH(async (_req, res) => {
-  const cfg = await loadConfig();
-  const mode = cfg.browserMode || (cfg.autoOpenBrowser === false ? 'none' : 'app');
-  openInBrowser(frontendUrl || `http://localhost:${currentPort}`, mode);
-  res.json({ ok: true, mode, url: frontendUrl });
+  const opened = openInBrowser(frontendUrl || `http://localhost:${currentPort}`);
+  res.json({ ok: true, mode: opened.kind, url: frontendUrl });
 }));
 
-// Graceful shutdown · the uninstall script and the auto-upgrade path in
-// the launcher both call this. We reply first so the caller doesn't see
-// a torn connection, then exit on the next tick.
 app.post('/api/shutdown', (_req, res) => {
   res.json({ ok: true, bye: 'shutting down' });
-  // setImmediate so the response flushes before we tear the server down.
   setImmediate(() => gracefulShutdown('/api/shutdown'));
 });
 
-// ---- auto-snapshot scheduler ----
-let snapshotTimer = null;
-async function startSnapshotLoop() {
-  const cfg = await loadConfig();
-  const interval = Math.max(5_000, cfg.snapshotIntervalMs || 60_000);
-  const tick = async () => {
-    try {
-      const cfg = await loadConfig();
-      await saveSnapshot({ keep: cfg.snapshotHistoryKeep });
-    } catch (e) {
-      console.error('[snapshot]', e.message);
-    }
-  };
-  snapshotTimer = setInterval(tick, interval);
-  tick().catch(() => {});
-  console.log(`[snapshot] auto-saving every ${Math.round(interval / 1000)}s`);
+// ---- version / upgrade ----
+// `/api/version` reports the installed version (= pkg.version) and, if
+// reachable, the latest published on the npm registry. The result is
+// cached for 30 minutes in memory so the AboutPage poll doesn't hit the
+// registry on every render.
+//
+// `/api/upgrade` kicks off `npm i -g @bakapiano/ccsm@latest` as a
+// detached child. When the install completes, the child re-spawns `ccsm`
+// (also detached) so the launcher comes back up on the new version, and
+// the current server gracefulShutdowns. The frontend's OfflineBanner
+// covers the gap; the version router picks up the new version on the
+// next probe.
+const VERSION_CACHE_MS = 30 * 60_000;
+let versionCache = null; // { latest, fetchedAt }
+let upgradeInFlight = false;
+
+async function fetchLatestFromNpm() {
+  // Node 18+ has a global fetch. Time out the registry call to avoid
+  // hanging the response when the user is offline / behind a captive
+  // portal.
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 4000);
+  try {
+    const r = await fetch('https://registry.npmjs.org/@bakapiano%2Fccsm/latest', {
+      headers: { 'Accept': 'application/json' },
+      signal: ctrl.signal,
+    });
+    if (!r.ok) throw new Error(`registry HTTP ${r.status}`);
+    const j = await r.json();
+    return String(j.version || '');
+  } finally {
+    clearTimeout(t);
+  }
 }
 
-// Try the preferred port, then preferred+1..+9, then let the OS pick a free
-// one. Resolves with the port the server actually bound to.
+function cmpSemver(a, b) {
+  const pa = String(a || '').split('.').map(Number);
+  const pb = String(b || '').split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    const x = pa[i] || 0, y = pb[i] || 0;
+    if (x > y) return 1;
+    if (x < y) return -1;
+  }
+  return 0;
+}
+
+app.get('/api/version', asyncH(async (req, res) => {
+  const force = String(req.query.refresh || '') === '1';
+  const now = Date.now();
+  if (!force && versionCache && (now - versionCache.fetchedAt) < VERSION_CACHE_MS) {
+    return res.json({
+      current: pkg.version,
+      latest: versionCache.latest,
+      updateAvailable: cmpSemver(versionCache.latest, pkg.version) > 0,
+      fetchedAt: versionCache.fetchedAt,
+      cached: true,
+    });
+  }
+  try {
+    const latest = await fetchLatestFromNpm();
+    versionCache = { latest, fetchedAt: now };
+    res.json({
+      current: pkg.version,
+      latest,
+      updateAvailable: cmpSemver(latest, pkg.version) > 0,
+      fetchedAt: now,
+      cached: false,
+    });
+  } catch (e) {
+    // Swallow: surface "unknown" so the UI doesn't keep showing a stale
+    // "update available" badge based on a 6-hour-old cached value.
+    res.json({
+      current: pkg.version,
+      latest: null,
+      updateAvailable: false,
+      fetchedAt: now,
+      error: String(e.message || e),
+    });
+  }
+}));
+
+app.post('/api/upgrade', asyncH(async (req, res) => {
+  if (upgradeInFlight) {
+    return res.status(409).json({ error: 'upgrade already in progress' });
+  }
+  upgradeInFlight = true;
+  const target = String((req.body && req.body.target) || 'latest');
+  // Refuse anything that doesn't look like a semver dist-tag or version
+  // — defends against `;` etc. winding up in the spawn argv even though
+  // we don't shell out.
+  if (!/^[a-z0-9.+\-^~]+$/i.test(target)) {
+    upgradeInFlight = false;
+    return res.status(400).json({ error: `invalid target: ${target}` });
+  }
+  console.log(`[upgrade] starting npm i -g @bakapiano/ccsm@${target}`);
+  res.json({ ok: true, started: true, target });
+
+  // Defer the actual spawn so the HTTP response flushes first.
+  setImmediate(() => {
+    const { spawn } = require('node:child_process');
+    const npmExe = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+    const args = ['i', '-g', `@bakapiano/ccsm@${target}`];
+    const child = spawn(npmExe, args, {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+      shell: false,
+    });
+    child.on('error', (e) => {
+      console.error('[upgrade] npm spawn failed:', e.message);
+      upgradeInFlight = false;
+    });
+    child.on('exit', (code) => {
+      console.log(`[upgrade] npm exit ${code}`);
+      upgradeInFlight = false;
+      if (code !== 0) return;
+      // Install succeeded → spawn a fresh ccsm and shut down. The
+      // launcher already detaches on its own.
+      try {
+        const ccsmCmd = process.platform === 'win32' ? 'ccsm.cmd' : 'ccsm';
+        const respawn = spawn(ccsmCmd, [], {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+          shell: false,
+          env: { ...process.env, CCSM_NO_BROWSER: '1' },
+        });
+        respawn.unref();
+      } catch (e) {
+        console.error('[upgrade] respawn failed:', e.message);
+      }
+      setTimeout(() => gracefulShutdown('upgrade'), 1500);
+    });
+    child.unref();
+  });
+}));
+
+
 function listenWithFallback(preferred) {
   return new Promise((resolve, reject) => {
     const attempt = (port, tries) => {
@@ -616,7 +959,7 @@ function listenWithFallback(preferred) {
       server.once('error', (err) => {
         if (err.code !== 'EADDRINUSE') return reject(err);
         if (tries < 9) attempt(port + 1, tries + 1);
-        else if (tries === 9) attempt(0, tries + 1); // OS-assigned free port
+        else if (tries === 9) attempt(0, tries + 1);
         else reject(err);
       });
     };
@@ -640,39 +983,33 @@ function findAppModeBrowser() {
   return null;
 }
 
-function openInBrowser(url, mode) {
-  if (mode === 'none' || process.platform !== 'win32') return { kind: 'none', child: null };
+// Auto-open the frontend in a browser when ccsm boots. Strategy: try a
+// chromeless app window first (Edge/Chrome --app=); if neither is
+// installed, fall back to the OS default browser as a regular tab. On
+// non-Windows we skip — the bundled launcher isn't ported yet.
+function openInBrowser(url) {
+  if (process.platform !== 'win32') return { kind: 'none', child: null };
   const { spawn } = require('node:child_process');
   const fs = require('node:fs');
-
-  if (mode === 'app') {
-    const exe = findAppModeBrowser();
-    if (exe) {
-      // Per-ccsm profile dir so we don't get the "already running, --app
-      // ignored" merge behavior of Edge/Chrome when the user has a normal
-      // window open. Lives under DATA_DIR so it's tidied with the rest.
-      const profileDir = path.join(DATA_DIR, 'browser-profile');
-      fs.mkdirSync(profileDir, { recursive: true });
-      const child = spawn(
-        exe,
-        [
-          `--app=${url}`,
-          `--user-data-dir=${profileDir}`,
-          '--window-size=1500,1100',
-          '--no-first-run',
-          '--no-default-browser-check',
-        ],
-        { detached: true, stdio: 'ignore' }
-      );
-      child.unref();
-      return { kind: 'app', child };
-    }
-    console.log('[ccsm] no Edge/Chrome found for app mode, falling back to default browser');
+  const exe = findAppModeBrowser();
+  if (exe) {
+    const profileDir = path.join(DATA_DIR, 'browser-profile');
+    fs.mkdirSync(profileDir, { recursive: true });
+    const child = spawn(
+      exe,
+      [
+        `--app=${url}`,
+        `--user-data-dir=${profileDir}`,
+        '--window-size=1500,1100',
+        '--no-first-run',
+        '--no-default-browser-check',
+      ],
+      { detached: true, stdio: 'ignore' }
+    );
+    child.unref();
+    return { kind: 'app', child };
   }
-
-  // mode === 'tab' (or app-mode fallback). cmd's `start` builtin exits
-  // immediately after launching the default browser — the child handle
-  // isn't usable for lifecycle tracking.
+  console.log('[ccsm] no Edge/Chrome found, opening default browser');
   const child = spawn('cmd.exe', ['/c', 'start', '', url], {
     detached: true,
     stdio: 'ignore',
@@ -684,24 +1021,29 @@ function openInBrowser(url, mode) {
 
 (async () => {
   const cfg = await loadConfig();
-  // CCSM_PORT env var wins over config — handy for running a dev instance
-  // on a non-default port (e.g. 7778) while a prod ccsm keeps 7777.
   const preferredPort = process.env.CCSM_PORT ? Number(process.env.CCSM_PORT) : cfg.port;
   const { server, port } = await listenWithFallback(preferredPort);
   currentPort = port;
 
-  // WebSocket upgrade for /ws/terminal/:id → bridges xterm.js to a PTY
-  // entry in webTerminal's pool. Only enabled when node-pty loaded; the
-  // /api/capabilities endpoint advertises this to the frontend.
+  // On boot, mark any persisted "running" sessions as exited — they
+  // belong to a previous server process whose PTYs are gone.
+  try {
+    const all = await persistedSessions.loadAll();
+    for (const s of all) {
+      if (s.status === 'running') {
+        await persistedSessions.markExited(s.id, null);
+      }
+    }
+  } catch (e) {
+    console.error('[ccsm] could not reconcile persisted sessions:', e.message);
+  }
+
   if (webTerminal.available) {
     let WebSocketServer;
     try { ({ WebSocketServer } = require('ws')); } catch {}
     if (WebSocketServer) {
       const wss = new WebSocketServer({ noServer: true });
       server.on('upgrade', (req, socket, head) => {
-        // Origin check · same allow-list as REST CORS. Browsers always
-        // send Origin on WebSocket upgrades; missing Origin = non-browser
-        // client which we tolerate (curl etc).
         const origin = req.headers.origin;
         if (origin && !ALLOWED_ORIGINS.has(origin) && !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) {
           socket.destroy();
@@ -716,57 +1058,38 @@ function openInBrowser(url, mode) {
     }
   }
 
-  // OS signals · run a graceful shutdown (which saves a final snapshot
-  // and kills PTY children) before exiting.
   for (const sig of ['SIGINT', 'SIGTERM']) {
     process.on(sig, () => gracefulShutdown(sig));
   }
-  // Last-resort cleanup on sync exit (process.on('exit') can't await
-  // anything, so it's only a safety net for PTY children).
   process.on('exit', () => { try { webTerminal.killAll(); } catch {} });
+
   const apiUrl = `http://localhost:${port}`;
-  // What URL we open in the auto-spawned browser:
-  //   dev  → localhost (backend still serves public/ here)
-  //   prod → hosted frontend on GH Pages (backend is API-only)
   const FRONTEND_URL = IS_DEV
     ? apiUrl
-    : 'https://bakapiano.github.io/ccsm/v1/';
+    : 'https://bakapiano.github.io/ccsm/';
   frontendUrl = FRONTEND_URL;
   console.log(`ccsm listening on ${apiUrl}${port !== cfg.port ? `  (requested ${cfg.port}, was taken)` : ''}`);
   console.log(`frontend at      ${FRONTEND_URL}`);
   console.log(`data dir:        ${DATA_DIR}`);
   console.log(`work dir:        ${cfg.workDir}`);
-  console.log(`terminal:        ${cfg.terminal} · ${cfg.claudeCommand}${cfg.terminal === 'wt' ? ` (via ${cfg.commandShell})` : ''}`);
-  // CCSM_NO_BROWSER=1 (set by the launcher when responding to a ccsm://
-  // protocol click) suppresses the auto-spawned browser window — the
-  // caller already has one open and just needs the backend to come up.
-  const mode = process.env.CCSM_NO_BROWSER === '1'
-    ? 'none'
-    : (cfg.browserMode || (cfg.autoOpenBrowser === false ? 'none' : 'app'));
-  const opened = openInBrowser(FRONTEND_URL, mode);
+  console.log(`clis:            ${cfg.clis.map((c) => c.id).join(', ')} (default: ${cfg.defaultCliId})`);
 
-  // Primary lifecycle: tie this server's lifetime to the chromeless
-  // browser window. msedge.exe runs with its own --user-data-dir process
-  // group, so when the user closes the window it actually exits — and
-  // the spawned child handle we hold here fires 'exit'. Skip if the user
-  // explicitly asked the server to stay alive (e.g. an automation host).
+  // CCSM_NO_BROWSER=1 (set by the ccsm:// protocol launcher) suppresses
+  // the auto-open entirely. Otherwise try app-mode (chromeless Edge/Chrome
+  // window); if no such browser is installed, openInBrowser falls back to
+  // the OS default browser on its own.
+  const opened = process.env.CCSM_NO_BROWSER === '1'
+    ? { kind: 'none', child: null }
+    : openInBrowser(FRONTEND_URL);
+
   if (opened.kind === 'app' && opened.child && process.env.CCSM_KEEP_ALIVE !== '1') {
     const launchedAt = Date.now();
     opened.child.on('exit', () => {
       const alive = Date.now() - launchedAt;
-      // Edge --app= often spawns a process that immediately hands its URL
-      // off to an existing Edge profile process group and exits — our
-      // child handle dies milliseconds after creation. Treat any exit
-      // inside the first 5s as a hand-off, not a real close.
       if (alive < 5000) {
         console.log(`[ccsm] spawned browser child exited in ${alive}ms · handed off to an existing Edge instance, staying alive`);
         return;
       }
-      // Defer the kill decision by one full frontend ping cycle (~12s,
-      // matching the 10s heartbeat cadence below). Any heartbeat that
-      // arrives AFTER this moment must be from a DIFFERENT client (the
-      // closing browser couldn't ping after it died) — so a hosted-tab
-      // user is still around and we should stay alive.
       const closedAt = Date.now();
       setTimeout(() => {
         if (lastHeartbeat > closedAt + 100) {
@@ -779,13 +1102,6 @@ function openInBrowser(url, mode) {
     console.log('[ccsm] tied to browser window — close it to stop ccsm');
   }
 
-  // Heartbeat watchdog · only activated when launched via bin/ccsm.js
-  // (CCSM_LAUNCHER=1). Catches cases the primary mechanism misses: the
-  // browser was killed forcibly, msedge crashed without a clean exit, or
-  // the user opened the URL in tab-mode in their own browser instead of
-  // the chromeless app window. We don't kill until we've seen at least
-  // one heartbeat — that way a freshly-booted server with no client yet
-  // doesn't suicide.
   if (process.env.CCSM_LAUNCHER === '1' && process.env.CCSM_KEEP_ALIVE !== '1') {
     setInterval(() => {
       if (!heartbeatSeen) return;
@@ -795,8 +1111,6 @@ function openInBrowser(url, mode) {
     }, 30_000);
     console.log('[ccsm] heartbeat watchdog active');
   }
-
-  startSnapshotLoop();
 })().catch((err) => {
   console.error('startup failed:', err);
   process.exit(1);

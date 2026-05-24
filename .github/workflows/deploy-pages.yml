@@ -1,14 +1,25 @@
 name: Deploy frontend to GitHub Pages
 
-# Publish public/ to gh-pages branch under /v1/ on every change to public/
-# on the main branch. `keep_files: true` so other version directories
-# (future /v2/, /v3/) stay intact.
+# Deploys two things to gh-pages:
+#   /                — version-router (pages-root/) · static
+#   /<pkg.version>/  — full per-version frontend (public/)
+#
+# The router probes the locally-installed backend at /api/health and
+# redirects to whichever version matches. Old versions stay forever via
+# `keep_files: true` so users on stale backends keep working.
+#
+# Per-version index.html gets a <meta name="ccsm-frontend-version">
+# injected at build time. The frontend uses this on boot to detect
+# "backend has been upgraded since I was loaded" and bounce through the
+# router again.
 
 on:
   push:
     branches: [main]
     paths:
       - 'public/**'
+      - 'pages-root/**'
+      - 'package.json'
       - '.github/workflows/deploy-pages.yml'
   workflow_dispatch:
 
@@ -25,10 +36,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Stage public/ under v1/
+      - name: Read package version
+        id: ver
         run: |
-          mkdir -p out/v1
-          cp -r public/. out/v1/
+          v=$(node -p "require('./package.json').version")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "Deploying frontend version: $v"
+
+      - name: Stage router + per-version frontend
+        run: |
+          set -eu
+          v="${{ steps.ver.outputs.version }}"
+          mkdir -p "out/$v"
+          cp -r public/. "out/$v/"
+          # Bake the version into the per-version index so the running
+          # frontend can detect "backend was upgraded under me" and bounce
+          # back through the router. Use node for the rewrite (already on
+          # the runner; avoids sed delimiter gymnastics around <meta charset>).
+          node -e "
+            const fs=require('fs');
+            const p='out/$v/index.html';
+            const html=fs.readFileSync(p,'utf8');
+            const tag='<meta name=\"ccsm-frontend-version\" content=\"$v\">';
+            if (html.includes('ccsm-frontend-version')) { process.exit(0); }
+            const next=html.replace(/(<meta charset=\"utf-8\"\s*\/?>)/i, '\$1\n    '+tag);
+            if (next === html) { console.error('meta injection failed'); process.exit(1); }
+            fs.writeFileSync(p, next);
+          "
+          grep -n 'ccsm-frontend-version' "out/$v/index.html"
+          # Router lives at root
+          cp -r pages-root/. out/
 
       - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v4
@@ -40,4 +77,4 @@ jobs:
           force_orphan: false
           user_name: 'github-actions[bot]'
           user_email: 'github-actions[bot]@users.noreply.github.com'
-          commit_message: 'deploy v1 · ${{ github.sha }}'
+          commit_message: 'deploy ${{ steps.ver.outputs.version }} · ${{ github.sha }}'

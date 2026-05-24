@@ -4,13 +4,23 @@
 
 import { render } from 'preact';
 import { html } from './html.js';
-import { loadPersisted, clockTick, lastRefreshAt, installPrompt, isInstalledPwa } from './state.js';
+import { loadPersisted, clockTick, lastRefreshAt, installPrompt, isInstalledPwa, sidebarForcedCollapsed } from './state.js';
 import { httpBase } from './backend.js';
-import { loadConfig, refreshAll, loadSessions, loadRecent, loadSnapshot, loadWorkspaces, loadWebTerminals, pollHealth } from './api.js';
+import { loadConfig, refreshAll, loadSessions, loadFolders, loadWorkspaces, pollHealth } from './api.js';
 import { setToast } from './toast.js';
 import { App } from './components/App.js';
 
 loadPersisted();
+// Pin the document title to "CCSM" — some Chromium builds will inject the
+// current URL or path into the standalone window title bar if the page
+// title is empty / changes; locking it here keeps the OS title bar text
+// stable across navigation, tab switches, and PWA-install refresh.
+const lockTitle = () => { if (document.title !== 'CCSM') document.title = 'CCSM'; };
+lockTitle();
+new MutationObserver(lockTitle).observe(
+  document.querySelector('title') || document.head,
+  { childList: true, subtree: true, characterData: true }
+);
 render(html`<${App} />`, document.getElementById('app'));
 
 // PWA install affordance — Chromium fires `beforeinstallprompt` when the
@@ -43,7 +53,22 @@ function applyIsAppClass() {
 applyIsAppClass();
 matchMedia('(display-mode: browser)').addEventListener('change', applyIsAppClass);
 
+// Force-collapse the sidebar on narrow viewports. Mirrors the responsive
+// CSS so JS state (toggle visibility, tree-render gating) agrees with the
+// rendered layout.
+const narrowMq = matchMedia('(max-width: 900px)');
+function applyNarrow() { sidebarForcedCollapsed.value = narrowMq.matches; }
+applyNarrow();
+narrowMq.addEventListener('change', applyNarrow);
+
 (async () => {
+  // Version-mismatch guard runs FIRST. If the user's backend has been
+  // upgraded since this per-version frontend was loaded, bounce back to
+  // the router immediately — no point loading config from a server that
+  // speaks a different API revision. Runs in dev too (it no-ops without
+  // the build-time <meta>).
+  await bootVersionGuard();
+
   try {
     await loadConfig();
     await refreshAll();
@@ -61,7 +86,7 @@ matchMedia('(display-mode: browser)').addEventListener('change', applyIsAppClass
   // move in/out of a workspace silently and the grid stays stale.
   setInterval(async () => {
     try {
-      await Promise.all([loadSessions(), loadRecent(), loadSnapshot(), loadWorkspaces(), loadWebTerminals()]);
+      await Promise.all([loadSessions(), loadFolders(), loadWorkspaces()]);
       lastRefreshAt.value = Date.now();
     } catch { /* swallow — next tick retries */ }
     pollHealth();
@@ -79,3 +104,29 @@ matchMedia('(display-mode: browser)').addEventListener('change', applyIsAppClass
   setInterval(ping, 10_000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) ping(); });
 })();
+
+// ─── version routing guard ───────────────────────────────────────────
+// Each deployed frontend is pinned to one backend version. The GH-Pages
+// workflow bakes the version into <meta name="ccsm-frontend-version">
+// so we can detect "backend has been upgraded since this frontend was
+// loaded" and bounce back through the router at /ccsm/ for a fresh
+// match. In dev (no meta tag, same-origin served-by-backend), the check
+// no-ops — we're always running the frontend that ships with this
+// backend by definition.
+async function bootVersionGuard() {
+  const meta = document.querySelector('meta[name="ccsm-frontend-version"]');
+  if (!meta) return;                          // dev mode
+  const myVer = meta.getAttribute('content');
+  if (!myVer) return;
+  let backendVer = null;
+  try {
+    const r = await fetch(httpBase() + '/api/health', { cache: 'no-store' });
+    if (!r.ok) return;
+    backendVer = (await r.json()).version;
+  } catch { return; }                          // offline → OfflineBanner takes over
+  if (!backendVer || backendVer === myVer) return;
+  // Mismatch. Bounce up one level to the router. The router will
+  // probe /api/health again and redirect to ./<backendVer>/.
+  console.warn(`[ccsm] frontend ${myVer} ≠ backend ${backendVer} — re-routing`);
+  location.replace('../');
+}

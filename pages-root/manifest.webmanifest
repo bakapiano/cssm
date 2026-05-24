@@ -1,4 +1,5 @@
 {
+  "id": "/ccsm/",
   "name": "CCSM",
   "short_name": "CCSM",
   "description": "Single pane over every live claude session on this machine.",

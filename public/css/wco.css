@@ -12,6 +12,8 @@
  */
 
 .sidebar-brand,
+.sidebar-top,
+.page-title-bar,
 .page-head,
 .page-head-inner,
 .page-title,
@@ -27,17 +29,16 @@ button, a, input, select, textarea, label,
 .action, .server-status,
 .star-btn, .rename-btn, .card-fold, .modal-close,
 .chip, .radio, .fab,
-.ph-stat, .ph-divider {
+.ph-stat, .ph-divider,
+.page-title-bar-actions,
+.session-title-action {
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }
 
-/* `user-select: none` on the drag-target text is needed so clicking the
-   page title doesn't start a text selection instead of a window drag. But
-   we only want this in PWA-like contexts — in a regular browser tab the
-   user should still be able to select the title text. Runtime JS adds
-   `body.is-app` when not in display-mode:browser; see main.js. */
 body.is-app .sidebar-brand,
+body.is-app .sidebar-top,
+body.is-app .page-title-bar,
 body.is-app .page-head,
 body.is-app .page-head-inner,
 body.is-app .page-title,
@@ -46,37 +47,23 @@ body.is-app .page-subtitle {
   -webkit-user-select: none;
 }
 
-/* In an app window, .main and .sidebar's own top padding is "blank space"
-   that has no drag region — clicking the topmost 32px does nothing. Move
-   that padding into the draggable child elements (.sidebar-brand and
-   .page-head) so the windowtop is grabbable all the way to y=0. Visually
-   nothing shifts; behaviourally the OS-title-bar zone now responds. */
+/* In an app/PWA window, the OS title bar is hidden and only floating
+   close/max/min controls remain in the top-right. The 40px top band of
+   ccsm (sidebar-top + page-title-bar) IS that title bar — it's already
+   tall enough, sits at y=0 with no extra padding, and gets a drag region
+   so the user can grab anywhere along it to move the window. */
 body.is-app .sidebar { padding-top: 0; }
 body.is-app .main    { padding-top: 0; }
-body.is-app .sidebar-brand {
-  padding-top: calc(var(--s-4) + var(--s-4)); /* 32px = old sidebar.pt + old brand.pt */
-}
-body.is-app .page-head {
-  padding-top: var(--s-8); /* 32px = old main.pt */
-  /* Reserve space on the right for the OS window controls (close /
-     maximize / minimize) that float over the top-right of every
-     chromeless app window — both --app= (display-mode: standalone)
-     and PWA. Without this, the server-status pill + Refresh button
-     slide under those controls and stop being clickable. ~150px covers
-     three Windows controls + a little breathing room; macOS traffic
-     lights are on the left so this is harmless there. The WCO override
-     below uses the precise env() value when the API is available. */
-  padding-right: 150px;
+
+/* Reserve room on the right of page-title-bar so its action buttons don't
+   slide under the floating OS controls. 150px covers Windows controls
+   (~46px each × 3) with breathing room; macOS traffic lights are on the
+   left so this padding is harmless there. WCO override below uses the
+   precise env() value when available. */
+body.is-app .page-title-bar {
+  padding-right: calc(var(--s-4) + 150px);
 }
 
-/* In app/PWA mode, hide the in-page title/subtitle entirely. The sidebar
-   nav already tells the user which section they're on, and the OS title
-   bar (or the floating WCO controls) is the only chrome we want. This
-   reclaims a chunky 60+ px of vertical real estate at the top of every
-   tab — really noticeable in the Terminals tab where xterm benefits
-   from every pixel. The page-head wrapper survives because it still
-   hosts the status pill + Refresh button on the right and remains
-   draggable. */
 body.is-app .page-title,
 body.is-app .page-subtitle {
   display: none;
@@ -88,12 +75,24 @@ body.is-app .page-head {
   min-height: 28px;
 }
 
-/* WCO-only · the OS title bar is fully gone, so right-pad the page-head
-   so the meta cluster doesn't slide under the floating close/max/min
-   controls. `.main`'s own 32px top padding already clears their height. */
+/* PWA / WCO / --app= mode: shrink the top band to 32px so its mid-line
+   matches the OS-floated close/max/min icons (which sit in a fixed ~32px
+   bar at y=0 and can't be moved). Outside app mode we keep the roomier
+   40px band — see sidebar.css / layout.css. */
+body.is-app .page-title-bar,
+body.is-app .sidebar-top {
+  height: 32px;
+  min-height: 32px;
+}
+body.is-app .sidebar-brand,
+body.is-app .sidebar-brand-button,
+body.is-app .collapse-toggle {
+  height: 32px;
+  min-height: 32px;
+}
+
 @media (display-mode: window-controls-overlay) {
-  .page-head {
-    padding-right: calc(var(--s-10) + 100vw - env(titlebar-area-width, 100vw));
-    min-height: env(titlebar-area-height, 32px);
+  body.is-app .page-title-bar {
+    padding-right: calc(var(--s-4) + 100vw - env(titlebar-area-width, 100vw));
   }
 }

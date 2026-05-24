@@ -34,7 +34,9 @@
   position: fixed;
   inset: 0;
   z-index: 200;
-  background: rgba(26, 24, 21, 0.48);
+  background: rgba(26, 24, 21, 0.42);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -46,15 +48,16 @@
 .modal {
   background: var(--bg-elev);
   border: 1px solid var(--border);
-  border-radius: var(--r-md);
+  border-radius: 14px;
   width: min(560px, 100%);
   max-height: 90vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   box-shadow:
-    0 24px 64px -16px rgba(26, 24, 21, 0.35),
-    0 4px 12px -2px rgba(26, 24, 21, 0.15);
+    0 32px 80px -20px rgba(26, 24, 21, 0.32),
+    0 8px 20px -4px rgba(26, 24, 21, 0.10),
+    0 0 0 1px rgba(26, 24, 21, 0.02);
   animation: modal-in .22s cubic-bezier(.4, 0, .2, 1);
 }
 @keyframes modal-in {
@@ -66,30 +69,44 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--s-4) var(--s-6);
+  gap: var(--s-3);
+  padding: 16px 20px;
   border-bottom: 1px solid var(--border-soft);
 }
 .modal-head h2 {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--ink);
+  letter-spacing: -0.005em;
+  margin: 0;
 }
+
+/* Red close X · subtle by default, fills red on hover. Available on
+   <Modal> and on confirm/prompt dialogs via dialog.js. */
 .modal-close {
   appearance: none;
   background: transparent;
   border: 0;
-  padding: 4px;
-  margin: -4px;
+  padding: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
   cursor: pointer;
-  color: var(--ink-muted);
-  border-radius: 4px;
+  color: #c44a4a;
   display: inline-flex;
-  transition: color .12s ease, background .12s ease;
+  align-items: center;
+  justify-content: center;
+  transition: color .12s ease, background .12s ease, transform .12s ease;
 }
-.modal-close:hover { color: var(--ink); background: var(--bg); }
+.modal-close:hover {
+  background: rgba(196, 74, 74, 0.10);
+  color: #b03737;
+}
+.modal-close:active { transform: scale(0.94); }
+.modal-close svg { display: block; }
 
 .modal-body {
-  padding: var(--s-5) var(--s-6);
+  padding: 18px 20px;
   overflow-y: auto;
   flex: 1;
 }
@@ -110,8 +127,8 @@
 .modal-foot {
   display: flex;
   justify-content: flex-end;
-  gap: var(--s-3);
-  padding: var(--s-3) var(--s-6);
+  gap: 8px;
+  padding: 12px 20px;
   border-top: 1px solid var(--border-soft);
   background: var(--bg);
 }
@@ -146,22 +163,19 @@
   margin-top: var(--s-3);
 }
 
-/* Narrower variant for confirm/prompt — no border under head, tighter padding */
+/* Narrower variant for confirm/prompt — keeps a head with the red close X */
 .modal-dialog { width: min(440px, 100%); }
-.modal-dialog .modal-head { padding: var(--s-4) var(--s-5) var(--s-3); border-bottom: 0; }
-.modal-dialog .modal-head h2 {
-  font-size: 14.5px;
-  font-weight: 600;
-  color: var(--ink);
-  line-height: 1.4;
-}
-.modal-dialog .modal-body { padding: 0 var(--s-5) var(--s-4); }
-.modal-dialog .modal-foot { padding: var(--s-3) var(--s-5); }
+.modal-dialog .modal-body { padding: 14px 20px 16px; }
 .modal-dialog input[type="text"] {
   width: 100%;
   max-width: none;
-  margin-top: var(--s-2);
+  margin-top: 8px;
 }
+
+/* Picker modals (CLI / Folder / Repos on launch page) — body is flush
+   so Picker.js controls inner padding. */
+.modal-picker .modal-body { padding: 0; }
+
 .dialog-msg {
   font-size: 13.5px;
   color: var(--ink-mid);

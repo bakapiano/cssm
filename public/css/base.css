@@ -4,10 +4,9 @@
 [hidden] { display: none !important; }
 
 html {
-  /* Reserve the scrollbar lane so the layout never shifts horizontally
-     when content grows past one viewport. Both columns of scroll-gutter
-     stay symmetric (Firefox/Chromium both honor this). */
-  scrollbar-gutter: stable;
+  /* No reserved scrollbar gutter — the sessions page is full-bleed and a
+     reserved right-side lane shows as visible empty space against the
+     terminal. Pages that overflow get the standard overlay scrollbar. */
 }
 html, body {
   background: var(--bg);
@@ -16,12 +15,30 @@ html, body {
   font-size: 14px;
   line-height: 1.5;
   font-variant-numeric: tabular-nums;
+  font-feature-settings: "ss01", "ss02", "cv11";
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
+/* Layer the paper grain over the entire app surface — fixed so panning
+   doesn't shift the noise pattern under the cursor. Subtle enough that
+   you only notice it on cream regions, never on terminals or images. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image: var(--paper-noise);
+  opacity: 0.55;
+  mix-blend-mode: multiply;
+}
+#app { position: relative; z-index: 1; }
+
 ::selection { background: var(--ink); color: var(--bg-elev); }
+::-moz-selection { background: var(--ink); color: var(--bg-elev); }
 
 code, .kbd {
   font-family: var(--mono);
@@ -43,7 +60,7 @@ code, .kbd {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
   background: var(--border-strong);
-  border-radius: 8px;
+  border-radius: 4px;
   border: 2px solid var(--bg);
   /* Forced minimum height so dragging the thumb is always practical even on
      very long pages. */

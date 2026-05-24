@@ -41,7 +41,7 @@ export function TerminalView({ terminalId }) {
     if (!terminalId || !hostRef.current) return;
 
     const term = new Terminal({
-      fontFamily: '"JetBrains Mono", "Cascadia Mono", Consolas, monospace',
+      fontFamily: '"Cascadia Mono", "Geist Mono", "JetBrains Mono", Consolas, monospace',
       fontSize: 13,
       lineHeight: 1.2,
       cursorBlink: true,
@@ -86,7 +86,8 @@ export function TerminalView({ terminalId }) {
     } catch (e) {
       console.warn('[ccsm] WebGL addon failed, using DOM renderer:', e);
     }
-    term.open(hostRef.current);
+    const host = hostRef.current;
+    term.open(host);
     // Defer fit one tick so the container has measured layout
     requestAnimationFrame(() => { try { fit.fit(); } catch {} });
     termRef.current = term;
@@ -123,6 +124,29 @@ export function TerminalView({ terminalId }) {
 
     const ro = new ResizeObserver(() => { try { fit.fit(); } catch {} });
     ro.observe(hostRef.current);
+
+    // Tab-switch refresh. The terminal lives inside a .tab-panel which gets
+    // display:none when another tab is active. WebGL renderers keep a glyph
+    // texture atlas in GPU memory; when the canvas hides + redisplays at a
+    // potentially different devicePixelRatio, the atlas isn't invalidated
+    // and old glyphs blend with newly-rasterized ones — visible as scrolling
+    // text ghosting / double-strikes. Watching the tab-panel's data-active
+    // attribute and clearing the atlas + re-fitting + forcing a full
+    // refresh wipes the cache cleanly.
+    const panel = host.closest('.tab-panel');
+    let panelMo = null;
+    if (panel) {
+      panelMo = new MutationObserver(() => {
+        if (panel.hasAttribute('data-active')) {
+          requestAnimationFrame(() => {
+            try { term.clearTextureAtlas?.(); } catch {}
+            try { fit.fit(); } catch {}
+            try { term.refresh(0, term.rows - 1); } catch {}
+          });
+        }
+      });
+      panelMo.observe(panel, { attributes: true, attributeFilter: ['data-active'] });
+    }
 
     // give focus to terminal so user can type immediately
     term.focus();
@@ -230,7 +254,6 @@ export function TerminalView({ terminalId }) {
     // we CAN re-anchor the textarea to the right edge while composing so
     // it grows leftward instead. Toggling a class on the host is enough;
     // the CSS in terminals.css does the rest.
-    const host = hostRef.current;
     const onCompStart = () => {
       if (host) host.classList.add('is-composing');
       // The terminal cursor is rendered on canvas (THEME.cursor), so CSS
@@ -260,6 +283,7 @@ export function TerminalView({ terminalId }) {
         helper.removeEventListener('compositionend', onCompEnd);
       }
       ro.disconnect();
+      if (panelMo) panelMo.disconnect();
       try { ws.close(); } catch {}
       try { term.dispose(); } catch {}
       termRef.current = null;

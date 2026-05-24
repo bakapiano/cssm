@@ -18,11 +18,19 @@ function push(entry) {
   });
 }
 
+const CLOSE_X = html`
+  <button class="modal-close" type="button" aria-label="Close" data-action="cancel">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+      <line x1="3" y1="3" x2="13" y2="13"/>
+      <line x1="13" y1="3" x2="3" y2="13"/>
+    </svg>
+  </button>`;
+
 export function ccsmConfirm(message, opts = {}) {
   const { title = 'Confirm', okLabel = 'Confirm', cancelLabel = 'Cancel', danger = false } = opts;
   return push({
     render: () => html`<div class="modal modal-dialog">
-      <header class="modal-head"><h2>${title}</h2></header>
+      <header class="modal-head"><h2>${title}</h2>${CLOSE_X}</header>
       <div class="modal-body"><p class="dialog-msg">${message}</p></div>
       <footer class="modal-foot">
         <button class="action" data-action="cancel">${cancelLabel}</button>
@@ -37,7 +45,7 @@ export function ccsmPrompt(message, defaultValue = '', opts = {}) {
   const { title, okLabel = 'Save', cancelLabel = 'Cancel', placeholder = '' } = opts;
   return push({
     render: () => html`<div class="modal modal-dialog">
-      <header class="modal-head"><h2>${title || message}</h2></header>
+      <header class="modal-head"><h2>${title || message}</h2>${CLOSE_X}</header>
       <div class="modal-body">
         ${title ? html`<p class="dialog-msg">${message}</p>` : null}
         <input type="text" class="input" placeholder=${placeholder} value=${defaultValue} />

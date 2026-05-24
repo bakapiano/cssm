@@ -1,224 +1,428 @@
-// Settings form. Edits to inputs mark configDirty until Save / Discard.
-// We write to a draft signal to avoid clobbering server-side state mid-edit;
-// the draft initialises from config.value the first time configure tab mounts
-// and after each successful save.
+// Settings page · summary lists of CLIs / Repos / Folders + General
+// (port / work dir / theme). Each row has Edit + Delete; "+ Add"
+// opens the same modal form used inline-from-launch.
 
 import { html } from '../html.js';
 import { useEffect, useState } from 'preact/hooks';
-import { config, terminals, configDirty, accentColor, setAccentColor, ACCENT_DEFAULT } from '../state.js';
-import { api, loadWorkspaces } from '../api.js';
+import {
+  config, configDirty, accentColor, folders, workspaces,
+  setAccentColor, ACCENT_DEFAULT,
+} from '../state.js';
+import {
+  api, loadConfig, loadWorkspaces, loadFolders,
+  createCli, updateCli, deleteCli, setDefaultCli,
+  createRepo, updateRepo, deleteRepo,
+  createFolder, renameFolder, deleteFolder, reorderFolders,
+  deleteWorkspace,
+} from '../api.js';
 import { setToast } from '../toast.js';
 import { ccsmConfirm } from '../dialog.js';
 import { Card } from '../components/Card.js';
-import { ReposEditor, addEmptyRepo } from '../components/ReposEditor.js';
+import { PageTitleBar } from '../components/PageTitleBar.js';
+import { EntityFormModal } from '../components/EntityFormModal.js';
+import { useDragSort } from '../components/useDragSort.js';
+import { IconPlus, IconPencil, IconClose, IconTerminal, IconFolder, IconBranch, IconForCliType, IconClaudeColor, IconCodexColor, IconCopilotColor } from '../icons.js';
 
-function defaultsFrom(cfg) {
-  if (!cfg) return null;
-  return {
-    port: cfg.port,
-    workDir: cfg.workDir,
-    snapshotIntervalMs: cfg.snapshotIntervalMs,
-    snapshotHistoryKeep: cfg.snapshotHistoryKeep,
-    claudeCommand: cfg.claudeCommand || 'claude',
-    terminal: cfg.terminal,
-    commandShell: cfg.commandShell || 'pwsh',
-    defaultTerminalMode: cfg.defaultTerminalMode || 'wt',
-    autoFocusOnLaunch: cfg.autoFocusOnLaunch !== false,
-    focusMovesToCenter: cfg.focusMovesToCenter === true,
-    browserMode: cfg.browserMode || (cfg.autoOpenBrowser === false ? 'none' : 'app'),
-    finderPrompt: cfg.finderPrompt || '',
-  };
+// Type → smart defaults. Choosing a type in the form auto-fills resumeArgs
+// (and command if blank) so users don't need to remember the per-CLI flag.
+const CLI_TYPE_DEFAULTS = {
+  claude:  { command: 'claude',  resumeArgs: '--continue',    resumeIdArgs: '--resume <id>' },
+  codex:   { command: 'codex',   resumeArgs: 'resume --last', resumeIdArgs: 'resume <id>' },
+  copilot: { command: 'copilot', resumeArgs: '--continue',    resumeIdArgs: '--resume <id>' },
+  other:   { resumeArgs: '', resumeIdArgs: '' },
+};
+
+function cliFieldsFor({ creating } = {}) {
+  return [
+    { key: 'type', label: 'Type', type: 'iconRadio', default: 'other', options: [
+      { value: 'claude',  label: 'Claude CLI',     icon: html`<${IconClaudeColor} />` },
+      { value: 'codex',   label: 'Codex CLI',      icon: html`<${IconCodexColor} />` },
+      { value: 'copilot', label: 'GitHub Copilot', icon: html`<${IconCopilotColor} />` },
+      { value: 'other',   label: 'Other',          icon: html`<${IconTerminal} />` },
+    ],
+      // When user picks a type while creating, prefill command + resumeArgs.
+      // For edit mode we don't override what the user already has.
+      onChange: creating ? (v, next) => {
+        const d = CLI_TYPE_DEFAULTS[v];
+        if (!d) return null;
+        const patch = { resumeArgs: d.resumeArgs, resumeIdArgs: d.resumeIdArgs };
+        if (!next.command || !next.command.trim()) patch.command = d.command || '';
+        if (!next.name || !next.name.trim()) {
+          patch.name = v === 'claude' ? 'Claude Code'
+                     : v === 'codex' ? 'OpenAI Codex'
+                     : v === 'copilot' ? 'GitHub Copilot'
+                     : '';
+        }
+        return patch;
+      } : undefined,
+    },
+    { key: 'name', label: 'Name', placeholder: 'My CLI', required: true },
+    { key: 'command', label: 'Command', mono: true, placeholder: 'ccp / claude / ...', required: true },
+    { key: 'args', label: 'Args (space-separated)', mono: true, placeholder: '',
+      hint: 'Used on every launch.' },
+    { key: 'resumeArgs', label: 'Resume args (fallback)', mono: true, placeholder: '--continue',
+      hint: 'Used when ccsm has no captured upstream session id — usually "open last session in cwd".' },
+    { key: 'resumeIdArgs', label: 'Resume by id args', mono: true, placeholder: '--resume <id>',
+      hint: 'Use <id> as the placeholder for the captured upstream session UUID. Leave empty to always use the fallback.' },
+    { key: 'shell', label: 'Shell', type: 'select', default: 'direct', options: [
+      { value: 'direct', label: 'direct (real .exe / .cmd)' },
+      { value: 'pwsh',   label: 'pwsh (PowerShell aliases & functions)' },
+      { value: 'cmd',    label: 'cmd (doskey)' },
+    ] },
+  ];
 }
 
+function Section({ title, meta, children }) {
+  return html`
+    <section class="settings-section">
+      <header class="settings-section-head">
+        <h2 class="settings-section-title">${title}</h2>
+        ${meta ? html`<p class="settings-section-meta">${meta}</p>` : null}
+      </header>
+      <div class="settings-section-body">${children}</div>
+    </section>`;
+}
+
+// ── Field definitions shared with Launch picker ──────────────────────
+// (CLI fields built lazily via cliFieldsFor — see above.)
+
+const repoFields = [
+  { key: 'name', label: 'Name', placeholder: 'my-repo', autoFocus: true, required: true },
+  { key: 'url',  label: 'URL', mono: true, placeholder: 'https://github.com/me/foo.git', required: true },
+  { key: 'defaultSelected', label: 'Pre-select on launch', type: 'checkbox',
+    hint: 'Auto-checked in the Repos picker for new sessions' },
+];
+
+const folderFields = [
+  { key: 'name', label: 'Folder name', placeholder: 'Work / Personal / ...', autoFocus: true, required: true },
+];
+
+// ── Page ─────────────────────────────────────────────────────────────
 export function ConfigurePage() {
   const cfg = config.value;
-  const [draft, setDraft] = useState(() => defaultsFrom(cfg));
+  const [edit, setEdit] = useState(null); // { kind, payload? }
+  const [general, setGeneral] = useState(null);
   const [savedAt, setSavedAt] = useState('');
 
-  // re-init from config whenever a fresh load lands (rare — typically only at boot,
-  // after Save, or after Discard). We compare a stringified snapshot so re-renders
-  // from unrelated signals don't reset our in-progress edits.
+  const folderDnd = useDragSort(
+    folders.value.map((f) => f.id),
+    async (nextIds) => {
+      try { await reorderFolders(nextIds); }
+      catch (e) { setToast(e.message, 'error'); }
+    },
+  );
+
   useEffect(() => {
-    if (!cfg) return;
-    if (!draft) { setDraft(defaultsFrom(cfg)); return; }
+    if (cfg && !general) {
+      setGeneral({ workDir: cfg.workDir });
+    }
   }, [cfg]);
 
-  if (!cfg || !draft) return null;
+  // Refresh workspace list when the page mounts so sizes are fresh.
+  useEffect(() => { loadWorkspaces().catch(() => {}); }, []);
 
-  const update = (patch) => {
-    setDraft({ ...draft, ...patch });
-    configDirty.value = true;
-  };
+  if (!cfg || !general) return null;
 
-  const reposChanged = () => {
-    configDirty.value = true;
-  };
-
-  const onSave = async () => {
-    const next = {
-      ...draft,
-      port: Number(draft.port) || 7777,
-      snapshotIntervalMs: Math.max(5000, Number(draft.snapshotIntervalMs) || 60000),
-      snapshotHistoryKeep: Math.max(1, Number(draft.snapshotHistoryKeep) || 30),
-      claudeCommand: (draft.claudeCommand || 'claude').trim(),
-      terminal: draft.terminal || 'wt',
-      commandShell: draft.commandShell || 'pwsh',
-      defaultTerminalMode: draft.defaultTerminalMode === 'web' ? 'web' : 'wt',
-      browserMode: draft.browserMode || 'app',
-      workDir: (draft.workDir || '').trim(),
-      repos: (cfg.repos || []).filter((r) => r.name && r.url),
-    };
+  const saveGeneral = async (patch) => {
+    const merged = { ...general, ...patch };
+    setGeneral(merged);
     try {
-      const saved = await api('PUT', '/api/config', next);
+      const saved = await api('PUT', '/api/config', {
+        ...cfg,
+        workDir: (merged.workDir || '').trim(),
+      });
       config.value = saved;
-      setDraft(defaultsFrom(saved));
-      setSavedAt(`saved · ${new Date().toLocaleTimeString(undefined, { hour12: false })}`);
-      configDirty.value = false;
-      setToast('config saved');
+      setToast('saved');
       await loadWorkspaces();
     } catch (e) { setToast(e.message, 'error'); }
   };
 
-  const onDiscard = async () => {
-    const ok = await ccsmConfirm('Discard your unsaved changes?', {
-      title: 'Discard changes', okLabel: 'Discard', danger: true,
-    });
-    if (!ok) return;
-    const fresh = await api('GET', '/api/config');
-    config.value = fresh;
-    setDraft(defaultsFrom(fresh));
-    configDirty.value = false;
-    setToast('changes discarded');
-  };
+  const close = () => setEdit(null);
 
   return html`
-    ${configDirty.value ? html`
-      <div class="dirty-banner">
-        <span class="dirty-dot"></span>
-        <span class="dirty-text">You have unsaved changes</span>
-        <button class="action small primary" onClick=${onSave}>Save now</button>
-        <button class="action small subtle" onClick=${onDiscard}>Discard</button>
-      </div>` : null}
+    <${PageTitleBar} title="Settings" />
+    <div class="settings-scroll">
 
-    <${Card} title="Settings" meta=${html`Persisted to <code>~/.ccsm/config.json</code>`}>
+    <${Section} title="General">
       <div class="config-grid">
-        <label class="field">
-          <span class="label">Port</span>
-          <input type="number" value=${draft.port}
-                 onInput=${(e) => update({ port: e.target.value })} />
-          <span class="hint">restart server to apply</span>
-        </label>
-        <label class="field">
-          <span class="label">Work directory</span>
-          <input type="text" value=${draft.workDir}
-                 onInput=${(e) => update({ workDir: e.target.value })} />
-        </label>
-        <label class="field">
-          <span class="label">Snapshot interval (ms)</span>
-          <input type="number" min="5000" value=${draft.snapshotIntervalMs}
-                 onInput=${(e) => update({ snapshotIntervalMs: e.target.value })} />
-        </label>
-        <label class="field">
-          <span class="label">History kept</span>
-          <input type="number" min="1" value=${draft.snapshotHistoryKeep}
-                 onInput=${(e) => update({ snapshotHistoryKeep: e.target.value })} />
-        </label>
-        <label class="field">
-          <span class="label">Claude command</span>
-          <input type="text" placeholder="claude" value=${draft.claudeCommand}
-                 onInput=${(e) => update({ claudeCommand: e.target.value })} />
-          <span class="hint">alias / function / exe name</span>
-        </label>
-        <label class="field">
-          <span class="label">Default mode <span class="hint inline">(new · resume · continue · finder)</span></span>
-          <select class="input" value=${draft.defaultTerminalMode}
-                  onChange=${(e) => update({ defaultTerminalMode: e.target.value })}>
-            <option value="wt">system terminal · open a real ${draft.terminal || 'wt'} window</option>
-            <option value="web">web · in-page xterm under the Terminals tab</option>
-          </select>
-          <span class="hint">web requires node-pty; per-launch radios can override</span>
-        </label>
-        <label class="field">
-          <span class="label">Terminal</span>
-          <select class="input" value=${draft.terminal}
-                  onChange=${(e) => update({ terminal: e.target.value })}>
-            ${(terminals.value || []).map((t) => html`
-              <option key=${t.name} value=${t.name}>${t.name} · ${t.processName}</option>`)}
-          </select>
-        </label>
-        <label class="field">
-          <span class="label">Command shell <span class="hint inline">(wt only)</span></span>
-          <select class="input" value=${draft.commandShell}
-                  onChange=${(e) => update({ commandShell: e.target.value })}>
-            <option value="pwsh">pwsh · PowerShell 7</option>
-            <option value="powershell">powershell · Windows PowerShell 5.1</option>
-            <option value="none">none · run command directly</option>
-          </select>
-        </label>
-        <label class="field">
-          <span class="label">Browser open mode</span>
-          <select class="input" value=${draft.browserMode}
-                  onChange=${(e) => update({ browserMode: e.target.value })}>
-            <option value="app">app · Edge/Chrome chromeless</option>
-            <option value="tab">tab · default browser</option>
-            <option value="none">off · don't open</option>
-          </select>
-        </label>
-        <label class="field toggle">
-          <input type="checkbox" checked=${draft.autoFocusOnLaunch}
-                 onChange=${(e) => update({ autoFocusOnLaunch: e.target.checked })} />
-          <span class="toggle-text">
-            <span class="label">Auto-focus on launch</span>
-            <span class="hint">raise newly-launched terminal window</span>
-          </span>
-        </label>
-        <label class="field toggle">
-          <input type="checkbox" checked=${draft.focusMovesToCenter}
-                 onChange=${(e) => update({ focusMovesToCenter: e.target.checked })} />
-          <span class="toggle-text">
-            <span class="label">Move focused window to screen center</span>
-            <span class="hint">centers the focused window on whichever monitor the cursor is on</span>
-          </span>
-        </label>
-        <label class="field full">
-          <span class="label">Finder prompt</span>
-          <textarea rows="3" value=${draft.finderPrompt}
-                    onInput=${(e) => update({ finderPrompt: e.target.value })}></textarea>
-          <span class="hint">passed as initial prompt to the finder session</span>
-        </label>
-
         <div class="field">
           <span class="label">Theme accent</span>
           <${AccentPicker} />
-          <span class="hint">also tints the OS title bar (theme-color)</span>
-        </div>
-
-        <div class="field full">
-          <div class="repos-head">
-            <span class="label">Repositories</span>
-            <button class="action small" onClick=${() => { addEmptyRepo(reposChanged); }}>+ Add repo</button>
-          </div>
-          <${ReposEditor} onChange=${reposChanged} />
-        </div>
-
-        <div class="form-actions full">
-          <button class=${`action primary${configDirty.value ? ' is-dirty' : ''}`}
-                  onClick=${onSave}>Save configuration</button>
-          <span class="muted-text">${savedAt}</span>
         </div>
       </div>
-    </${Card}>`;
+    </${Section}>
+
+    <${Section} title="CLIs" meta=${html`Built-in entries (<code>claude</code>, <code>codex</code>) auto-probe your PATH.`}>
+      <${EntityList}
+        kind="cli"
+        addLabel="Add CLI"
+        items=${(cfg.clis || []).map((c) => {
+          const tags = [];
+          if (cfg.defaultCliId === c.id) tags.push({ label: 'default', tone: 'accent' });
+          if (c.builtin) tags.push({ label: c.installed ? 'installed' : 'not found', tone: c.installed ? 'ok' : 'warn' });
+          const Icon = IconForCliType(c.type);
+          return {
+            id: c.id,
+            icon: html`<${Icon} />`,
+            primary: c.name,
+            secondary: html`<span class="mono">${c.command}${c.args?.length ? ' ' + c.args.join(' ') : ''}</span>${c.shell && c.shell !== 'direct' ? html` · ${c.shell}` : null}`,
+            badges: tags,
+            undeletable: c.builtin,
+            raw: c,
+          };
+        })}
+        onAdd=${() => setEdit({ kind: 'cli-new' })}
+        onEdit=${(it) => setEdit({ kind: 'cli-edit', payload: it.raw })}
+        onDelete=${async (it) => {
+          if (it.undeletable) return setToast(`"${it.primary}" is built-in and can't be deleted`, 'error');
+          if (cfg.clis.length === 1) return setToast('cannot delete the last CLI', 'error');
+          const ok = await ccsmConfirm(`Delete CLI "${it.primary}"?`, { okLabel: 'Delete', danger: true });
+          if (!ok) return;
+          try { await deleteCli(it.id); setToast('deleted'); }
+          catch (e) { setToast(e.message, 'error'); }
+        }}
+        onActivate=${async (it) => {
+          if (cfg.defaultCliId === it.id) return;
+          try { await setDefaultCli(it.id); setToast(`default · ${it.primary}`); }
+          catch (e) { setToast(e.message, 'error'); }
+        }}
+        emptyHint="No CLIs configured."
+      />
+    </${Section}>
+
+    <${Section} title="Repositories" meta="Available for clone-on-launch into a new workspace.">
+      <${EntityList}
+        kind="repo"
+        addLabel="Add Repo"
+        items=${(cfg.repos || []).map((r) => ({
+          id: r.name,
+          icon: html`<${IconBranch} />`,
+          primary: r.name,
+          secondary: html`<span class="mono">${r.url}</span>`,
+          badge: r.defaultSelected ? 'auto' : null,
+          raw: r,
+        }))}
+        onAdd=${() => setEdit({ kind: 'repo-new' })}
+        onEdit=${(it) => setEdit({ kind: 'repo-edit', payload: it.raw })}
+        onDelete=${async (it) => {
+          const ok = await ccsmConfirm(`Remove repo "${it.primary}" from the list?`, { okLabel: 'Remove', danger: true });
+          if (!ok) return;
+          try { await deleteRepo(it.id); setToast('removed'); }
+          catch (e) { setToast(e.message, 'error'); }
+        }}
+        emptyHint="No repos configured."
+      />
+    </${Section}>
+
+    <${Section} title="Folders" meta="Buckets that group sessions in the sidebar.">
+      <${EntityList}
+        kind="folder"
+        addLabel="Add Folder"
+        dnd=${folderDnd}
+        items=${folders.value.map((f) => ({
+          id: f.id,
+          icon: html`<${IconFolder} />`,
+          primary: f.name,
+          secondary: null,
+          raw: f,
+        }))}
+        onAdd=${() => setEdit({ kind: 'folder-new' })}
+        onEdit=${(it) => setEdit({ kind: 'folder-edit', payload: it.raw })}
+        onDelete=${async (it) => {
+          const ok = await ccsmConfirm(`Delete folder "${it.primary}"? Sessions inside move to Unsorted.`, { okLabel: 'Delete', danger: true });
+          if (!ok) return;
+          try { await deleteFolder(it.id); setToast('deleted'); }
+          catch (e) { setToast(e.message, 'error'); }
+        }}
+        emptyHint="No folders yet."
+      />
+    </${Section}>
+
+    <${Section} title="Workspaces"
+                meta=${html`Auto-allocated <code>ws-N</code> folders under the work directory. Each holds one or more repo clones.`}>
+      <div class="config-grid">
+        <label class="field">
+          <span class="label">Work directory</span>
+          <input type="text" value=${general.workDir}
+                 onChange=${(e) => saveGeneral({ workDir: e.target.value })} />
+        </label>
+      </div>
+      <${WorkspaceList} />
+    </${Section}>
+
+    </div>
+
+    ${edit?.kind === 'cli-new' ? html`
+      <${EntityFormModal} title="New CLI" fields=${cliFieldsFor({ creating: true })}
+        onClose=${close} submitLabel="Create"
+        onSubmit=${async (v) => {
+          try { await createCli(v); setToast(`created CLI · ${v.name}`); }
+          catch (e) { setToast(e.message, 'error'); throw e; }
+        }} />` : null}
+
+    ${edit?.kind === 'cli-edit' ? html`
+      <${EntityFormModal} title=${`Edit ${edit.payload.name}`} fields=${cliFieldsFor()}
+        readOnlyKeys=${edit.payload.builtin ? ['type', 'command'] : []}
+        initial=${{
+          ...edit.payload,
+          args: (edit.payload.args || []).join(' '),
+          resumeArgs: (edit.payload.resumeArgs || []).join(' '),
+          resumeIdArgs: (edit.payload.resumeIdArgs || []).join(' '),
+        }}
+        onClose=${close}
+        onSubmit=${async (v) => {
+          try {
+            const patch = {
+              ...v,
+              args: typeof v.args === 'string' ? v.args.split(/\s+/).filter(Boolean) : v.args,
+              resumeArgs: typeof v.resumeArgs === 'string' ? v.resumeArgs.split(/\s+/).filter(Boolean) : v.resumeArgs,
+              resumeIdArgs: typeof v.resumeIdArgs === 'string' ? v.resumeIdArgs.split(/\s+/).filter(Boolean) : v.resumeIdArgs,
+            };
+            // command is locked on builtins — drop any tampered value.
+            if (edit.payload.builtin) delete patch.command;
+            await updateCli(edit.payload.id, patch);
+            setToast('saved');
+          } catch (e) { setToast(e.message, 'error'); throw e; }
+        }} />` : null}
+
+    ${edit?.kind === 'repo-new' ? html`
+      <${EntityFormModal} title="New repo" fields=${repoFields}
+        onClose=${close} submitLabel="Add"
+        onSubmit=${async (v) => {
+          try { await createRepo(v); setToast(`added repo · ${v.name}`); }
+          catch (e) { setToast(e.message, 'error'); throw e; }
+        }} />` : null}
+
+    ${edit?.kind === 'repo-edit' ? html`
+      <${EntityFormModal} title=${`Edit ${edit.payload.name}`} fields=${repoFields}
+        initial=${edit.payload}
+        onClose=${close}
+        onSubmit=${async (v) => {
+          try { await updateRepo(edit.payload.name, v); setToast('saved'); }
+          catch (e) { setToast(e.message, 'error'); throw e; }
+        }} />` : null}
+
+    ${edit?.kind === 'folder-new' ? html`
+      <${EntityFormModal} title="New folder" fields=${folderFields}
+        onClose=${close} submitLabel="Create"
+        onSubmit=${async (v) => {
+          try { await createFolder(v.name); await loadFolders(); setToast(`created folder · ${v.name}`); }
+          catch (e) { setToast(e.message, 'error'); throw e; }
+        }} />` : null}
+
+    ${edit?.kind === 'folder-edit' ? html`
+      <${EntityFormModal} title=${`Rename ${edit.payload.name}`} fields=${folderFields}
+        initial=${edit.payload}
+        onClose=${close}
+        onSubmit=${async (v) => {
+          try { await renameFolder(edit.payload.id, v.name.trim()); await loadFolders(); setToast('renamed'); }
+          catch (e) { setToast(e.message, 'error'); throw e; }
+        }} />` : null}
+  `;
 }
 
-// Curated preset palette + free hex input. Each preset is a hand-picked
-// brand color that reads well on the cream surface. Selecting a swatch
-// applies immediately via setAccentColor (which writes CSS vars +
-// localStorage) — no save button needed since this is a per-browser
-// UI preference, not part of the server-side config.
+// Generic "list of rows + Add button" used by all three sections.
+function EntityList({ items, onAdd, onEdit, onDelete, onActivate, emptyHint, dnd, addLabel = 'Add' }) {
+  return html`
+    <div class="entity-list">
+      ${items.length === 0
+        ? html`<div class="entity-empty">${emptyHint}</div>`
+        : items.map((it) => {
+          const rowProps = dnd ? dnd.rowProps(it.id) : {};
+          const handleProps = dnd ? dnd.handleProps(it.id) : {};
+          const badges = it.badges || (it.badge ? [{ label: it.badge, tone: 'accent' }] : []);
+          return html`
+          <div class=${`entity-row${dnd ? ' is-draggable' : ''}`} key=${it.id}
+               ...${rowProps} ...${handleProps}>
+            ${dnd ? html`<span class="entity-row-grip" aria-hidden="true">⋮⋮</span>` : null}
+            <span class="entity-row-icon">${it.icon}</span>
+            <span class="entity-row-main">
+              <span class="entity-row-primary">
+                ${it.primary}
+                ${badges.map((b) => html`
+                  <span class=${`entity-row-badge tone-${b.tone || 'accent'}`}>${b.label}</span>`)}
+              </span>
+              ${it.secondary ? html`<span class="entity-row-secondary">${it.secondary}</span>` : null}
+            </span>
+            <span class="entity-row-actions">
+              ${onActivate ? html`
+                <button class="entity-row-action" title="Set default"
+                        onClick=${() => onActivate(it)}>★</button>` : null}
+              <button class="entity-row-action" title="Edit"
+                      onClick=${() => onEdit(it)}><${IconPencil} /></button>
+              ${it.undeletable ? null : html`
+                <button class="entity-row-action danger" title="Delete"
+                        onClick=${() => onDelete(it)}><${IconClose} /></button>`}
+            </span>
+          </div>`;
+        })}
+      <button class="entity-add" type="button" onClick=${onAdd}>
+        <span>${addLabel}</span>
+      </button>
+    </div>`;
+}
+
+// ── Workspace list ───────────────────────────────────────────────────
+function fmtBytes(n) {
+  if (n == null) return '—';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function WorkspaceList() {
+  const ws = workspaces.value || [];
+  if (ws.length === 0) {
+    return html`<div class="entity-empty">No workspaces yet — they're created automatically on launch.</div>`;
+  }
+  const onDelete = async (w) => {
+    if (w.inUse) return setToast(`"${w.name}" is in use by a running session`, 'error');
+    const ok = await ccsmConfirm(
+      `Delete workspace "${w.name}"? This removes the directory and all repo clones inside (${fmtBytes(w.size)}).`,
+      { okLabel: 'Delete', danger: true },
+    );
+    if (!ok) return;
+    try {
+      await deleteWorkspace(w.name);
+      await loadWorkspaces();
+      setToast(`deleted · ${w.name}`);
+    } catch (e) { setToast(e.message, 'error'); }
+  };
+  return html`
+    <div class="entity-list">
+      ${ws.map((w) => {
+        const repoCount = (w.repos || []).filter((r) => r.exists).length;
+        return html`
+        <div class="entity-row" key=${w.path}>
+          <span class="entity-row-icon"><${IconFolder} /></span>
+          <span class="entity-row-main">
+            <span class="entity-row-primary">
+              ${w.name}
+              ${w.inUse ? html`<span class="entity-row-badge tone-warn">in use</span>` : null}
+            </span>
+            <span class="entity-row-secondary">
+              <span class="mono">${w.path}</span>
+              · ${fmtBytes(w.size)}
+              ${repoCount > 0 ? html` · ${repoCount} ${repoCount === 1 ? 'repo' : 'repos'}` : null}
+            </span>
+          </span>
+          <span class="entity-row-actions">
+            <button class=${`entity-row-action danger${w.inUse ? ' is-disabled' : ''}`}
+                    title=${w.inUse ? 'In use by a running session' : 'Delete'}
+                    disabled=${w.inUse}
+                    onClick=${() => onDelete(w)}><${IconClose} /></button>
+          </span>
+        </div>`;
+      })}
+    </div>`;
+}
+
+// ── Accent picker (unchanged) ────────────────────────────────────────
 const PRESETS = [
-  { name: 'Claude copper', hex: '#b3614a' },   // default
-  { name: 'Anthropic ink', hex: '#1a1815' },
   { name: 'Ocean',         hex: '#2f6fa3' },
+  { name: 'Claude copper', hex: '#b3614a' },
+  { name: 'Anthropic ink', hex: '#1a1815' },
   { name: 'Forest',        hex: '#3f7a4a' },
   { name: 'Amber',         hex: '#c4892b' },
   { name: 'Berry',         hex: '#a44b78' },
@@ -227,39 +431,57 @@ const PRESETS = [
 ];
 
 function AccentPicker() {
-  const current = accentColor.value;
+  const current = (accentColor.value || '').toLowerCase();
+  const matchedPreset = PRESETS.find((p) => p.hex.toLowerCase() === current);
+  const [customOpen, setCustomOpen] = useState(!matchedPreset);
   const [text, setText] = useState(current);
-  // Keep the text input in sync if the signal changes from elsewhere
-  // (preset click, reset). useState would otherwise drift on subsequent
-  // applies. eslint-disable-next-line — intentionally re-syncing on prop change.
   useEffect(() => { setText(current); }, [current]);
 
+  const pickPreset = (hex) => {
+    setAccentColor(hex);
+    setCustomOpen(false);
+  };
   const onText = (e) => {
     const v = e.target.value.trim();
     setText(v);
-    // Apply live only when it's a valid hex; otherwise let the user
-    // keep typing without flicker.
     if (/^#[0-9a-fA-F]{6}$/.test(v)) setAccentColor(v);
   };
-
   return html`
     <div class="accent-picker">
-      <div class="accent-swatches">
-        ${PRESETS.map((p) => html`
-          <button key=${p.hex} class=${`accent-swatch${current.toLowerCase() === p.hex.toLowerCase() ? ' is-active' : ''}`}
-                  style=${`background:${p.hex}`}
-                  title=${`${p.name} · ${p.hex}`}
-                  aria-label=${p.name}
-                  onClick=${() => setAccentColor(p.hex)}></button>`)}
+      <div class="accent-chips">
+        ${PRESETS.map((p) => {
+          const active = current === p.hex.toLowerCase();
+          return html`
+            <button key=${p.hex} type="button"
+                    class=${`accent-chip${active ? ' is-active' : ''}`}
+                    style=${`--c:${p.hex}`}
+                    title=${p.hex}
+                    onClick=${() => pickPreset(p.hex)}>
+              <span class="accent-chip-dot" aria-hidden="true"></span>
+              <span class="accent-chip-name">${p.name}</span>
+            </button>`;
+        })}
+        <button type="button"
+                class=${`accent-chip accent-chip-custom${customOpen ? ' is-open' : ''}${!matchedPreset ? ' is-active' : ''}`}
+                style=${!matchedPreset ? `--c:${current}` : ''}
+                onClick=${() => setCustomOpen((v) => !v)}>
+          ${!matchedPreset
+            ? html`<span class="accent-chip-dot" aria-hidden="true"></span>`
+            : html`<span class="accent-chip-plus" aria-hidden="true">+</span>`}
+          <span class="accent-chip-name">Custom</span>
+        </button>
       </div>
-      <div class="accent-custom">
-        <input type="color" value=${current}
-               onInput=${(e) => setAccentColor(e.target.value)} />
-        <input type="text" class="accent-hex" value=${text}
-               spellcheck="false" maxlength="7"
-               onInput=${onText} placeholder="#rrggbb" />
-        <button class="action subtle small"
-                onClick=${() => setAccentColor(ACCENT_DEFAULT)}>Reset</button>
-      </div>
+      ${customOpen ? html`
+        <div class="accent-custom">
+          <input type="color" value=${current}
+                 onInput=${(e) => setAccentColor(e.target.value)} />
+          <input type="text" class="accent-hex mono" value=${text}
+                 spellcheck="false" maxlength="7"
+                 onInput=${onText} placeholder="#rrggbb" />
+          <button type="button" class="accent-reset"
+                  onClick=${() => { setAccentColor(ACCENT_DEFAULT); setCustomOpen(false); }}>
+            Reset
+          </button>
+        </div>` : null}
     </div>`;
 }

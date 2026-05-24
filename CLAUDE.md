@@ -1,27 +1,29 @@
 # ccsm — Claude Code Session Manager
 
-A small Node/Express + Preact web tool that gives a single pane over all
-live Claude Code sessions on this machine, snapshots them, restores them
-through Windows Terminal, and launches new sessions inside isolated
-workspaces.
+A small Node/Express + Preact web tool that runs every Claude/Codex/
+Copilot CLI session inside a single web app. PTYs live in-process
+(node-pty), sessions persist across restarts, and `--resume <uuid>`
+reattaches to the exact upstream conversation.
 
 ## Why this exists
 
 When you're running 8–10 concurrent `claude` sessions across ad-hoc
 clones (`D:\proj`, `D:\proj2`, `…`, plus GUID worktree dirs), it's easy
 to lose track of which terminal is which session. ccsm gives an
-at-a-glance list and a snapshot/restore safety net.
+at-a-glance sidebar, organises sessions into folders, and `--resume`s
+each one in the same xterm.js panel.
 
 ## Architecture: hosted frontend + local backend
 
-The single most important fact about ccsm v0.8+ is that **the frontend
-is no longer bundled into the npm package** in production. It lives at
-`https://bakapiano.github.io/ccsm/v1/`, served by GitHub Pages, deployed
-via the workflow at `.github/workflows/deploy-pages.yml`.
+The frontend is **not** bundled in the npm package — it's hosted on
+GitHub Pages and matched to your installed backend version through a
+version router.
 
 ```
 ┌── browser ────────────────────────────┐
-│  https://bakapiano.github.io/ccsm/v1/    ← static frontend
+│  https://bakapiano.github.io/ccsm/    ← version router (tiny)
+│                       ↓
+│  https://bakapiano.github.io/ccsm/X.Y.Z/  ← per-version frontend
 └────────────┬──────────────────────────┘
              │  fetch /api/*   (CORS, allow-list)
              │  ws://localhost:7777/ws/*
@@ -29,23 +31,37 @@ via the workflow at `.github/workflows/deploy-pages.yml`.
 ┌── local backend ──────────────────────┐
 │  npm i -g @bakapiano/ccsm             │
 │  ccsm                                  │
-│   ├── /api/sessions  /api/snapshot    │
-│   ├── /api/sessions/new (NDJSON)      │
-│   ├── /ws/terminal/:id (PTY)          │
-│   ├── /api/heartbeat /api/spawn-browser│
-│   └── /api/health /api/shutdown       │
+│   ├── /api/sessions  /api/sessions/new │
+│   ├── /api/sessions/:id/resume         │
+│   ├── /api/sessions/adopt              │
+│   ├── /ws/terminal/:id (PTY)           │
+│   ├── /api/version  /api/upgrade       │
+│   ├── /api/heartbeat /api/health       │
+│   └── /api/shutdown                    │
 └───────────────────────────────────────┘
 ```
 
-Why this split:
-- Frontend can be updated independently — push to `main`, CI rebuilds GH Pages, every user hot-refreshes.
-- No service worker complexity needed for "PWA loads even when backend is dead". The page itself is on GH Pages; the backend going down only loses `/api/*`, and the page handles that gracefully with an OfflineBanner.
-- Cross-platform path forward — backend can be ported per-OS, but the frontend never has to be.
-- Versioned at `/v1/` so future breaking changes ship a fresh `/v2/` while `/v1/` keeps serving the older clients.
+**Version routing.** GH Pages root (`/ccsm/`) hosts a tiny static
+router (`pages-root/index.html`) that probes `localhost:7777/api/health`
+and redirects to `./<backend.version>/`. Each release publishes a fresh
+`/ccsm/<X.Y.Z>/` subdir; old ones stay forever via the workflow's
+`keep_files: true`. Result: a 1:1 frontend↔backend version pin, no
+semver-compat logic, and old backends keep working indefinitely.
 
-In **dev mode** (running from a checkout — `__dirname` not under
+Each per-version frontend has its version baked into a `<meta
+name="ccsm-frontend-version">` at deploy time (injected by the GH Pages
+workflow). On boot it re-fetches `/api/health` and bounces back through
+the router via `location.replace('../')` if the backend has since been
+upgraded.
+
+When the backend is offline the router itself shows a "Start ccsm" UI
+with a `ccsm://start` link (same protocol-handler trick we already
+register at install time). No need to redirect to a stale version.
+
+**Dev mode.** When running from a checkout (`__dirname` not under
 `node_modules`), the backend ALSO serves `public/` so contributors can
-iterate at `localhost:7777/` without pushing.
+iterate at `localhost:7777/` without pushing. In dev there's no
+`<meta>` tag → the version guard no-ops.
 
 ## Run
 
@@ -57,26 +73,24 @@ npm install -g @bakapiano/ccsm
 ccsm
 ```
 
-`ccsm` opens the hosted frontend in a chromeless Edge `--app=` window.
+`ccsm` opens the version router in a chromeless Edge `--app=` window.
 Terminal returns immediately (the server is spawned detached). Close
-the window → server saves a final snapshot and exits within ~12s.
+the window → server saves a final snapshot of state and exits within
+~12s.
 
 If you don't want the auto-opened window (e.g. you live in the PWA),
-just visit `https://bakapiano.github.io/ccsm/v1/` — when backend is
-down you see an OfflineBanner with a **Start ccsm** button.
+just visit `https://bakapiano.github.io/ccsm/` — when backend is
+down you see the inline OfflineBanner with a **Start ccsm** button.
 
 Default port `7777`, default workDir `~/ccsm-workspaces`. Config +
-snapshots live at `~/.ccsm/` (override with `CCSM_HOME=<path>`). All
-settings editable through the Configure panel
+state live at `~/.ccsm/` (override with `CCSM_HOME=<path>`). All
+settings editable through the Configure page
 (`~/.ccsm/config.json` on disk). Notable knobs:
 
-- `port` (default `7777`) — preferred listen port. If taken, ccsm tries `+1..+9` then asks the OS for any free port. The startup log prints the actual URL.
+- `port` (default `7777`) — preferred listen port. If taken, ccsm tries `+1..+9` then asks the OS for any free port.
 - `browserMode` (default `app`) — `app` finds Edge or Chrome and spawns it with `--app=<url> --user-data-dir=<DATA_DIR>/browser-profile`. `tab` opens the default browser. `none` skips opening.
-- `claudeCommand` (default `"claude"`) — what gets `--resume`'d or freshly invoked. Can be an exe, alias, function, or wrapper script.
-- `terminal` — `wt` | `powershell` | `pwsh` | `cmd`. wt opens a fresh window per launch (`wt -w new`).
-- `commandShell` (default `pwsh`) — only consulted when `terminal=wt`. Wraps `claudeCommand` in `pwsh -NoExit -NoLogo -Command ...` so PowerShell aliases resolve.
-- `autoFocusOnLaunch` (default true) — after every launch (new session, finder, resume, restore) the server takes an HWND snapshot of terminal windows, polls for a new HWND, and `SetForegroundWindow`s it.
-- `finderPrompt` — initial message passed to the "Ask Claude to find a session" finder session.
+- `clis` — array of CLI definitions. Built-ins for `claude`, `codex`, `copilot`; users can add `other` CLIs with custom `command`, `args`, `resumeArgs`, `resumeIdArgs`, `shell` (direct/pwsh/cmd).
+- `defaultCliId` — which CLI the Launch page pre-selects.
 
 ## ccsm:// protocol · "wake on click"
 
@@ -93,39 +107,49 @@ spawned `ccsm.cmd` runs **completely hidden**. No console flash. The
 `.cmd` goes through `bin/ccsm.js`, which detects `ccsm://start` in argv,
 spawns `server.js` detached with `CCSM_NO_BROWSER=1`, and exits.
 
-OfflineBanner's "Start ccsm" button is just an `<a href="ccsm://start">`.
-First click triggers a one-time Windows confirmation dialog ("Open
-ccsm.cmd?"); ticking "Always allow" makes it silent thereafter.
+The router's "Start ccsm" button (and OfflineBanner inside each
+per-version frontend) is just `<a href="ccsm://start">`. First click
+triggers a one-time Windows confirmation dialog ("Open ccsm.cmd?");
+ticking "Always allow" makes it silent thereafter.
 
-postinstall (`scripts/install.js`) registers the protocol unconditionally
-on Windows — including npx-cache installs. The path stored in the
-registry points at whatever `ccsm.cmd` location npm gave us
-(`<prefix>/ccsm.cmd` from `npm config get prefix`).
+postinstall (`scripts/install.js`) registers the protocol
+unconditionally on Windows — including npx-cache installs. The path
+stored in the registry points at whatever `ccsm.cmd` location npm gave
+us (`<prefix>/ccsm.cmd` from `npm config get prefix`).
+
+## In-app upgrade
+
+About page surfaces the installed version, polls
+`registry.npmjs.org/@bakapiano%2Fccsm/latest` (cached 30 min) for the
+latest published version, and offers an **Upgrade** button when newer.
+`POST /api/upgrade` spawns `npm i -g @bakapiano/ccsm@latest` detached,
+then on success spawns a fresh `ccsm` (also detached) and
+gracefulShutdowns. The OfflineBanner appears briefly; the router then
+picks up the new version on its next probe.
+
+The `target` field is regex-validated (`/^[a-z0-9.+\-^~]+$/i`) before
+the spawn — npm install doesn't shell out, but defends against argv
+weirdness regardless. Concurrent calls return `409`.
 
 ## Lifecycle
 
 Single `gracefulShutdown(reason)` function in `server.js` is the only
-exit path. It races `saveSnapshot()` against a 2s timeout, kills any
-PTY children, then `process.exit(0)`. Every trigger funnels here:
+exit path. It kills any PTY children, then `process.exit(0)`. Every
+trigger funnels here:
 
 | trigger | path |
 |---|---|
 | auto-spawned browser window closes | `child.on('exit')` — see smart-kill below |
 | `POST /api/shutdown` | from npm uninstall, from launcher's auto-upgrade |
+| `POST /api/upgrade` after install completes | self-restart |
 | SIGINT / SIGTERM | OS signals |
 | heartbeat watchdog timeout | 90s with no heartbeat, only when launched via `bin/ccsm.js` |
 
 **Smart browser-exit**: when the spawned browser child dies, we don't
 kill immediately. Two filters:
 
-1. **Fast-exit (<5s)** — Edge `--app=` often hands the URL off to an
-   existing Edge profile process group and the spawned child dies
-   milliseconds after creation. We ignore any exit inside the first 5s.
-
-2. **Deferred multi-client check (12s)** — after a real close, wait 12s
-   and check if any heartbeat arrived AFTER the close timestamp. If
-   yes, a hosted-frontend tab (or another window) is keeping us busy,
-   stay alive. If no, gracefulShutdown.
+1. **Fast-exit (<5s)** — Edge `--app=` often hands the URL off to an existing Edge profile process group and the spawned child dies milliseconds after creation. We ignore any exit inside the first 5s.
+2. **Deferred multi-client check (12s)** — after a real close, wait 12s and check if any heartbeat arrived AFTER the close timestamp. If yes, a hosted-frontend tab (or another window) is keeping us busy, stay alive. If no, gracefulShutdown.
 
 Frontend heartbeat cadence is 10s (in `main.js`), so one full cycle
 fits inside the 12s decision window.
@@ -133,8 +157,51 @@ fits inside the 12s decision window.
 Environment overrides:
 - `CCSM_KEEP_ALIVE=1` → disable both browser-exit hook and heartbeat watchdog. For automation hosts.
 - `CCSM_LAUNCHER=1` → set by `bin/ccsm.js` when it spawns the server; enables the heartbeat watchdog.
-- `CCSM_NO_BROWSER=1` → set by the launcher when handling a `ccsm://` click; suppresses the server's auto-open browser.
+- `CCSM_NO_BROWSER=1` → set by the launcher when handling a `ccsm://` click or by `/api/upgrade` self-respawn; suppresses the server's auto-open browser.
 - `CCSM_NO_DEV=1` → suppress dev-mode features (static serving, hot-reload SSE) even when running from a checkout.
+
+## Sessions: persisted, adopted, resumed
+
+There's **one source of truth**: `~/.ccsm/sessions.json`, managed by
+`lib/persistedSessions.js`. Every session ccsm starts goes in there
+with `{ id, cliId, cwd, workspace, title, folderId, repos,
+cliSessionId, status, … }`. We don't enumerate `~/.claude/` or walk
+process trees anymore.
+
+**`cliSessionId` capture.** For `claude` / `codex` / `copilot`, on
+spawn we kick off `lib/cliSessionWatcher.js`. It polls the CLI's
+transcript directory (`~/.claude/projects/<slug>/`,
+`~/.codex/sessions/`, `~/.copilot/session-state/`) for a new file whose
+recorded cwd matches our spawn cwd, then stores its UUID into the
+record. Later, **resume** rewrites the args using the CLI's
+`resumeIdArgs` template (`['--resume', '<id>']`) so the upstream
+conversation reattaches precisely. Fallback when no UUID is captured:
+`cli.resumeArgs` (`--continue` / `resume --last`).
+
+Watcher lifecycle: 5-minute timeout. If no transcript ever appears,
+the ccsm record is removed (we assume the user closed the CLI before
+it persisted anything). The cleanup fn returned by `captureSessionId`
+is tracked in a module-scope `Map` keyed by ccsm session id, and torn
+down on PTY exit and on session delete — otherwise a still-running
+watcher could match a future session's transcript and stamp the wrong
+UUID onto a dead record.
+
+If the record already has a `cliSessionId` (typical for resume and
+**always** for `adopt`-imported sessions), we skip the watcher
+entirely — there's nothing left to capture, and the timeout would
+wipe the record after 5 min.
+
+**Adopt.** "Import existing session" on the Launch page lists
+sessions found on disk (`/api/cli-sessions/:type`) and lets the user
+add one to ccsm with `/api/sessions/adopt`. The created record is
+born `status: 'exited'` with `cliSessionId` pre-set. Clicking it in
+the sidebar runs the normal resume flow — which uses the captured id.
+
+**Auto-resume.** SessionsPage doesn't show a "Resume" button. On
+mount, if the active session's status isn't `running`, it calls
+`resumeSession()`. `resumeSession()` in `api.js` keeps a per-id
+in-flight Map so the same call from Sidebar.onClick and the
+SessionsPage effect collapse into a single backend hit.
 
 ## Layout
 
@@ -147,52 +214,49 @@ ccsm/
 │   ├── install.js                # postinstall · ccsm:// + launcher.vbs
 │   └── uninstall.js              # preuninstall · cleanup + /api/shutdown
 ├── lib/
-│   ├── sessions.js               # ~/.claude/sessions/*.json + tasklist PID check
-│   ├── snapshot.js               # save / load / rotate / restore
-│   ├── workspace.js              # workspace = folder under workDir
-│   ├── launcher.js               # spawn wt / pwsh / cmd
-│   ├── focus.js                  # PowerShell + Win32 EnumWindows / SetForegroundWindow
-│   ├── webTerminal.js            # in-process PTY pool · node-pty + WebSocket bridge
-│   ├── favorites.js · labels.js  # pinned sessions / rename overrides
+│   ├── persistedSessions.js      # ~/.ccsm/sessions.json — source of truth
+│   ├── folders.js                # ~/.ccsm/folders.json — sidebar tree
+│   ├── localCliSessions.js       # scan ~/.claude · ~/.codex · ~/.copilot
+│   ├── cliSessionWatcher.js      # capture upstream session UUID after spawn
+│   ├── workspace.js              # ws-N allocation under workDir, repo clones
+│   ├── webTerminal.js            # in-process PTY pool · node-pty + WebSocket
 │   ├── jsonStore.js              # shared keyed-JSON store factory
-│   └── config.js                 # loadConfig / saveConfig
-└── public/                       # Preact + HTM + signals (no build step) — also pushed to GH Pages /v1/
-    ├── index.html                # relative paths so it works at any host path
-    ├── manifest.webmanifest      # PWA · relative start_url, WCO display override
+│   └── config.js                 # loadConfig / saveConfig + DATA_DIR
+├── pages-root/                   # pushed to GH Pages /
+│   ├── index.html                # version router · probe localhost, redirect
+│   ├── manifest.webmanifest      # PWA · stable id, start_url: ./
+│   └── favicon.svg
+└── public/                       # pushed to GH Pages /<version>/
+    ├── index.html                # workflow injects <meta ccsm-frontend-version>
+    ├── manifest.webmanifest      # per-version (links back to root scope)
     ├── favicon.svg
     ├── js/
     │   ├── backend.js            # httpBase() / wsBase() — same-origin local, cross-origin hosted
-    │   ├── main.js               # boot · clock tick · heartbeat · is-app body class
+    │   ├── main.js               # boot · version guard · clock · heartbeat
     │   ├── state.js              # signals
-    │   ├── api.js                # fetch wrapper + loaders
+    │   ├── api.js                # fetch wrapper + loaders + dedup-aware resumeSession
     │   ├── streaming.js          # NDJSON clone-progress stream
-    │   ├── actions.js            # focus / resume / favorite / rename
     │   ├── dialog.js · toast.js  # ccsmConfirm / ccsmPrompt / setToast
     │   ├── html.js · icons.js · util.js
     │   ├── components/
-    │   │   ├── App.js · Sidebar.js · PageHead.js · Footer.js
-    │   │   ├── ServerStatus.js · Toast.js · Fab.js · OfflineBanner.js
-    │   │   ├── Card.js · Pagination.js · TitleCell.js
-    │   │   ├── SessionsTable.js · RecentTable.js · FavoritesTable.js
-    │   │   ├── RepoPicker.js · ReposEditor.js · WorkspacePicker.js
-    │   │   ├── WorkspacesGrid.js · SnapshotPanel.js · ProgressList.js
-    │   │   ├── TerminalView.js · NewSessionModal.js
-    │   │   └── DialogHost.js
+    │   │   ├── App.js · Sidebar.js · PageTitleBar.js
+    │   │   ├── ServerStatus.js · Toast.js · OfflineBanner.js · DialogHost.js
+    │   │   ├── Card.js · Modal.js · Popover.js · Picker.js · EntityFormModal.js
+    │   │   ├── DirectoryPicker.js · AdoptModal.js
+    │   │   ├── ProgressList.js · TerminalView.js · useDragSort.js
     │   └── pages/
     │       ├── SessionsPage.js · LaunchPage.js
-    │       ├── TerminalsPage.js
     │       ├── ConfigurePage.js · AboutPage.js
-    └── css/                      # 13 focused stylesheets
+    └── css/                      # 12 focused stylesheets
         ├── tokens.css · base.css · layout.css
-        ├── sidebar.css · cards.css · tables.css · forms.css
+        ├── sidebar.css · cards.css · forms.css
         ├── widgets.css · feedback.css · modal.css
         ├── terminals.css · wco.css · responsive.css
 
 ~/.ccsm/                          # or $CCSM_HOME
 ├── config.json                   # source of truth
-├── snapshot.json                 # latest auto-snapshot
-├── snapshots/                    # rotating history (default keep=30)
-├── favorites.json · labels.json  # pinned / renamed sessions
+├── sessions.json                 # persisted sessions (id, cliSessionId, …)
+├── folders.json                  # folder tree
 ├── server.log                    # detached-server stdout/stderr
 ├── .first-run-shown              # marker so launcher only prints PWA hint once
 └── browser-profile/              # Edge/Chrome --user-data-dir when browserMode=app
@@ -209,18 +273,15 @@ idempotent).
 
 ## Locked-in design decisions
 
+**Single in-app terminal, no `wt`.** PTYs run in-process via node-pty
+and stream to xterm.js over `/ws/terminal/:id`. We dropped the
+`wt`-per-session, focus-by-HWND, snapshot-of-live-claudes layer
+entirely — too platform-specific and the web terminal handles
+everything the old path did.
+
 **Workspace = folder holding multiple repo clones.** Each `ws-N` under
-`workDir` contains a subdirectory per cloned repo. Claude launches at
-the workspace root so all selected repos are sibling folders. "One repo
-per workspace" was explicitly rejected.
-
-**wt: one window per session, not stacked tabs.** Both
-`/api/snapshot/restore` and `/api/sessions/new` open a fresh `wt`
-window. "Stacked tabs via `-w 0 nt`" was explicitly rejected.
-
-**"In use" detection.** A workspace is in use iff any live Claude
-session's cwd is at-or-inside the workspace path (case-insensitive
-Windows compare via `path.resolve().toLowerCase()`).
+`workDir` contains a subdirectory per cloned repo. CLIs launch at the
+workspace root so all selected repos are sibling folders.
 
 **Workspace naming.** Auto-allocated names are `ws-1`, `ws-2`, …
 (lowest free integer). Hand-named folders under `workDir` are still
@@ -228,9 +289,9 @@ picked up.
 
 **Frontend trusts the backend's capability advertisement.**
 `/api/capabilities` returns `{ webTerminal: true|false, ... }`. The
-frontend uses ONLY features the backend says it has. Future breaking
-changes ship a fresh `/v2/` frontend path; old `/v1/` still works
-against backends that advertise the v1 contract.
+frontend uses ONLY features the backend says it has. Breaking changes
+ship a new `/ccsm/<X.Y.Z>/` frontend; the router pins users to the
+matching version.
 
 **One source of truth for cross-origin.** `public/js/backend.js`
 exports `httpBase()` and `wsBase()`. Localhost → same-origin (empty
@@ -241,26 +302,23 @@ allows `https://bakapiano.github.io` only — never `*`.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/sessions` | live sessions sorted by `updatedAt` desc |
-| GET | `/api/sessions/recent` | recently-used sessions from jsonl mtimes · `?limit=&offset=` |
-| POST | `/api/sessions/new` | body `{repos, workspace?, terminal: 'wt'\|'web'}` — NDJSON stream |
-| POST | `/api/sessions/finder` | opens a wt with `claude` in `~/.ccsm` and `finderPrompt` |
-| POST | `/api/sessions/:id/resume` | body `{cwd}` — `wt -d <cwd> claude --resume <id>` |
-| POST | `/api/sessions/:id/focus` | match a wt window by title, fall back to PID-parent walk |
-| GET | `/api/sessions/web` | list active web-terminal PTY sessions |
-| DELETE | `/api/sessions/web/:id` | kill a web-terminal PTY |
 | GET / PUT | `/api/config` | read / replace config |
-| GET / POST | `/api/snapshot` | latest snapshot / force-save now |
-| GET | `/api/snapshot/history` | rotated history filenames |
-| POST | `/api/snapshot/restore` | launch one wt window per session in snapshot |
+| GET | `/api/sessions` | list persisted sessions |
+| PUT | `/api/sessions/:id` | rename / move to folder |
+| DELETE | `/api/sessions/:id` | kill PTY + drop record + stop any watcher |
+| POST | `/api/sessions/new` | body `{cliId, cwd?, repos?, folderId?, title?}` — NDJSON stream (workspace · clone-progress · launched) |
+| POST | `/api/sessions/:id/resume` | re-spawn at `cwd` with `cli.resumeIdArgs <id>` (fallback `resumeArgs`) |
+| GET | `/api/cli-sessions/:type` | scan disk for unimported `claude`/`codex`/`copilot` sessions |
+| POST | `/api/sessions/adopt` | body `{cliId, cliSessionId, cwd, title?, folderId?}` — create a `status:exited` record with `cliSessionId` pre-set |
+| GET | `/api/folders` · POST `/api/folders` · PUT/DELETE `/api/folders/:id` · POST `/api/folders/reorder` | folder CRUD |
 | GET | `/api/workspaces` | workspaces under workDir with repo clone status + in-use flag |
-| GET | `/api/favorites` · POST/DELETE `/api/favorites/:id` | star / unstar |
-| GET | `/api/labels` · PUT/DELETE `/api/labels/:id` | rename / clear override |
-| GET | `/api/terminals` | enumerate built-in terminal kinds |
+| GET | `/api/browse` | directory browser for the Launch page workdir picker |
+| GET | `/api/version` | `{ current, latest, updateAvailable, fetchedAt, cached, error? }` (npm registry cached 30 min, `?refresh=1` to bust) |
+| POST | `/api/upgrade` | body `{target?}` — `npm i -g @bakapiano/ccsm@<target>` then self-restart |
 | GET | `/api/capabilities` | `{ webTerminal: bool, ... }` for frontend feature gating |
-| GET | `/api/health` | sanity ping + version |
+| GET | `/api/health` | `{ ok, pid, version, name }` — used by router probe + heartbeat |
 | POST | `/api/heartbeat` | called every 10s by the frontend; feeds lifecycle decisions |
-| POST | `/api/spawn-browser` | open another Edge window into the running server |
+| POST | `/api/spawn-browser` | open another browser window into the running server (used by `bin/ccsm.js` for auto-upgrade-restart) |
 | POST | `/api/shutdown` | gracefulShutdown — used by uninstall + auto-upgrade |
 | WS | `/ws/terminal/:id` | xterm.js bridge to a PTY in the webTerminal pool |
 | GET (dev) | `/api/dev/ping` · `/api/dev/reload` | hot-reload SSE (only when running from a checkout) |
@@ -278,56 +336,36 @@ Browsers always send Origin on WS upgrades.
 
 ## Non-obvious gotchas
 
-**wt.exe `-d` flag** (marker-file probes confirming `%CD%` inside the new tab):
+**`firstJsonField` close-event race.** `lib/cliSessionWatcher.js` reads
+the first few lines of the upstream CLI's transcript to extract its
+`cwd` field. `readline.close()` synchronously emits `'close'` on
+Windows, which would re-enter `done(null)` and clobber a freshly
+resolved value. Guarded by a `settled` flag.
 
-| variant | result |
-|---|---|
-| `wt -d D:\ccsm <cmd>` | ✓ |
-| `wt -d D:/ccsm <cmd>` | ✓ (forward slashes fine) |
-| `wt --startingDirectory D:\ccsm <cmd>` | ✓ |
-| `wt -d D:\ccsm\ <cmd>` (trailing sep) | ✓ |
-| spawn `{ cwd: ... }` with no `-d` | ✗ wt ignores parent cwd |
-| `wt -d "D:\ccsm" <cmd>` (literal quotes) | ✗ wt doesn't open |
-| `wt new-tab -d D:\ccsm <cmd>` | ✗ wt doesn't open |
+**Watcher rejected entries are NOT memoised by mtime.** Earlier
+implementations cached "this file was old at first poll, skip forever".
+Wrong — `claude` *appends* to an existing transcript on `--resume`, so
+the file's mtime later crosses `spawnAt` and the watcher must
+re-evaluate. Only `cwd`-mismatch rejections are memoised (those are
+stable per file).
 
-ccsm uses variant 1 and always `path.resolve()`s the cwd first — defends
-against a malformed `D:ccsm` being interpreted as "current dir on drive
-D + ccsm".
+**Adopt is atomic.** `persistedSessions.create()` accepts `status` +
+`cliSessionId` so the adopt endpoint writes the record in a single
+file write rather than `create({running})` + `update({exited,
+cliSessionId})`. The two-write form had a window where a concurrent
+GET /api/sessions could see `running` with no live PTY, fooling the
+sidebar's "skip resume if running" guard.
 
-**Don't test wt launching via `node -e "..."` inside `bash -c`.** Backslashes get eaten by shell quoting and the JS string ends up malformed. Write a `.js` file and `node file.js` instead.
+**Auto-resume dedup is module-level in api.js.** Sidebar.onClick and
+SessionsPage's effect can both fire for the same exited session in the
+same tick. `resumeSession()` keeps a per-id in-flight `Map` so the
+second caller awaits the first one's promise instead of issuing a
+second `/resume`.
 
-**focusBySession — title-based wt window matching.** Walking up the
-claude.exe PID parent chain and taking `MainWindowHandle` of the wt
-process *always* returns the same canonical window in modern multi-
-window single-process wt — clicking different sessions all focused the
-same window. `focusBySession` lists all visible wt windows
-(`EnumWindows` filtered by process name), strips the leading wt status
-glyph (`✳ `, `⠐ `, `⠠ ` …) and compares to the session's ai-title.
-Falls back to title-substring, then cwd-basename, then the old PID-
-parent walk when no unique match.
-
-**Focus helper (`lib/focus.js`).** One `powershell.exe -EncodedCommand <base64>` invocation per call, dispatched by `CCSM_FOCUS_MODE` env var. Encoded as UTF-16-LE-base64. Three baked-in gotchas:
-1. C# `out _` discard breaks PowerShell 5.1's C# compiler — use a named `uint dummy`.
-2. Windows blocks background processes from `SetForegroundWindow` — synthesize an Alt-key down/up via `keybd_event 0x12` first ("Alt-key trick").
-3. `ConvertTo-Json -AsArray` is PS 7+; on PS 5.1 build the JSON array manually.
-
-**HWND-diff for auto-focus, not PID-diff.** Modern Windows Terminal is multi-window single-process: one `WindowsTerminal.exe` PID owns 8+ top-level HWNDs.
-
-**wt `-w new`.** wt's `windowingBehavior` setting in some profiles folds new `wt …` invocations into the existing window as a tab. Force-prepending `-w new` makes wt always create a new window.
-
-**Auto-snapshot loop.** `setInterval` in `server.js` calls
-`saveSnapshot` every `snapshotIntervalMs`. The history dir grows until
-`snapshotHistoryKeep` is exceeded, then oldest are pruned. AND
-`gracefulShutdown` always saves one last snapshot before exit so a
-restart can restore current state.
-
-**Session listing.** `~/.claude/sessions/<pid>.json` is the source of
-truth. We cross-check the `pid` field against
-`tasklist /FI "IMAGENAME eq claude.exe"` so stale entries from crashed
-claudes don't appear. `ai-title` is read by tailing the last 1 MB of
-the matching `.jsonl` and finding the last `"type":"ai-title"` line.
-
-**`projectSlugForCwd`.** `cwd.replace(/[:\\]/g, '-')`, e.g. `D:\ccsm` → `D--ccsm`.
+**Heartbeat watchdog only when launched.** Set via `CCSM_LAUNCHER=1` by
+`bin/ccsm.js`. If you start `server.js` directly (e.g. dev), the
+90-second timeout doesn't apply — convenient when stepping through
+code, but you have to ctrl-c yourself when done.
 
 **ccsm:// silent dispatch.** Direct registration of `ccsm.cmd` as the
 protocol handler causes a brief console window flash (cmd hosts the
@@ -360,7 +398,6 @@ indicators, progress bars, page-actions banner) is ink/gray.
 - `--ink-mid` / `--ink-muted` / `--ink-faint`
 - `--accent`        `#b3614a`  desaturated terracotta — brand only
 - Status: green `#4a8a4a` idle · blue `#4a73a5` busy (pulsing) · red `#b73f3f` danger
-- Favorite star: `#e3b341` (gold, the only intentional non-grayscale accent in the data area)
 
 **Type**:
 - Body / headings: **Geist** (Google Fonts, 300–700).
@@ -371,50 +408,41 @@ indicators, progress bars, page-actions banner) is ink/gray.
 - `.action` (default) — white bg, ink-mid border, ink text.
 - `.action.primary` — black ink bg, white text. The "do this" CTA.
 - `.action.subtle` — transparent bg, light border.
-- `.action.danger` — filled red bg + white text (e.g. Remove repo).
+- `.action.danger` — filled red bg + white text.
 
 **Layout**:
 - Sidebar (collapsible, ~232px ↔ ~60px, state in `localStorage["ccsm.sidebar-collapsed"]`)
   - brand mark + `CCSM.` wordmark
-  - 5 nav items: Sessions / Launch / Terminals / Configure / About (Terminals only shown when `capabilities.webTerminal === true`)
-  - footer: Collapse toggle (chevron flips on collapse)
-- Page-head: title + subtitle on the left, server-status pill + Refresh button on the right
+  - tabs: Sessions / Launch / Configure / About
+  - folder tree of persisted sessions (drag-sortable)
+- Page-title bar: title on the left, server-status pill + Refresh button on the right
 - Top-right control group uses fixed `min-height: 28px` and `border-radius: 999px` so server-status + Refresh align as a coherent control row
 
-**Animation**:
-- Row staggered fade-in on first render. Preact's component identity prevents re-stage on auto-refresh (no `markRendered` machinery needed in v0.7+).
-- Panel switch: 0.35s `panel-in` fade-up.
-- Busy status mark: blue pulse via `box-shadow` keyframes.
-
-**No emoji in the UI** unless the user typed it (e.g. wt status glyphs
-in session titles). Use inline SVG icons everywhere (line stroke, 1.5–
-2px) so they take `currentColor`.
+**No emoji in the UI** unless the user typed it. Use inline SVG icons
+everywhere (line stroke, 1.5–2px) so they take `currentColor`.
 
 **PWA + WCO**:
-- `display_override: ["window-controls-overlay", "standalone"]` in
-  manifest. When installed and launched as PWA, the title bar's
-  middle is reclaimed; only OS controls float top-right.
-- `public/css/wco.css` provides drag regions (`-webkit-app-region:
-  drag` on `.sidebar-brand`, `.page-head`, etc., unconditional — Chromium
-  ignores in plain tabs, honors in PWA / `--app=`). Interactive
-  elements opt out via the no-drag block.
-- Padding gets shuffled (`body.is-app .main / .sidebar` lose top
-  padding, children compensate) so the very top of the window is
-  draggable instead of being `.main`'s dead padding zone.
+- `display_override: ["window-controls-overlay", "standalone"]` in the manifest. When installed and launched as PWA, the title bar's middle is reclaimed; only OS controls float top-right.
+- `public/css/wco.css` provides drag regions (`-webkit-app-region: drag`) on `.sidebar-brand`, `.page-head`, etc., unconditional. Interactive elements opt out via the no-drag block.
+- The root PWA manifest at `pages-root/manifest.webmanifest` has stable `id: /ccsm/` so installs survive across version-router redirects to new `/ccsm/<X.Y.Z>/` subdirs.
 
 ## Versioning
 
-The hosted frontend lives at `/v1/`. Backend follows semver but treats
-its API surface as additive:
-- Patch: bug fixes, no API change.
-- Minor: new endpoints, new fields on existing responses. Old frontend tolerates unknown extras.
-- Major: breaking changes. New frontend at `/v2/`; old frontend at `/v1/` keeps working against backends that advertise the v1 contract via `/api/capabilities`.
+The hosted frontend lives at `https://bakapiano.github.io/ccsm/`. The
+deploy workflow publishes two things to gh-pages on every push to main:
+
+1. `pages-root/` → `/` (the router, plus root PWA manifest)
+2. `public/` → `/<pkg.version>/` (the per-version frontend; workflow injects `<meta name="ccsm-frontend-version">` at build time)
+
+Old version dirs stay forever (`keep_files: true`), so a user on an
+older backend keeps loading the matching frontend until they upgrade.
 
 `bin/ccsm.js` does auto-upgrade-restart: when the user runs `ccsm` and
 the installed package version differs from a running backend, it POSTs
 `/api/shutdown` to the old, waits for the port to free, then spawns a
 fresh server. So `npm i -g @bakapiano/ccsm@latest && ccsm` is one
-seamless step.
+seamless step. From the frontend, the About page's Upgrade button
+achieves the same thing without leaving the browser.
 
 ## Cross-platform
 
@@ -422,16 +450,15 @@ Today: Windows-first.
 
 Cross-platform-clean already:
 - Frontend (pure web)
+- Router page (pure HTML/JS)
 - `bin/ccsm.js` (pure node)
 - `lib/webTerminal.js` (node-pty handles platform)
-- `lib/snapshot.js`, `lib/config.js`, `lib/jsonStore.js` (fs only)
+- `lib/persistedSessions.js`, `lib/folders.js`, `lib/config.js`, `lib/jsonStore.js`, `lib/cliSessionWatcher.js`, `lib/localCliSessions.js`, `lib/workspace.js` (fs only)
 - `server.js` Express + ws
 
 Windows-specific (need ports for Mac/Linux):
 - `scripts/install.js` — uses `reg.exe` and `wscript.exe`. Mac: write `Info.plist` with `CFBundleURLTypes`. Linux: write `~/.local/share/applications/ccsm.desktop` with `MimeType=x-scheme-handler/ccsm`.
-- `lib/focus.js` — PowerShell + Win32. Mac: `osascript`. Linux: `wmctrl`.
-- `lib/launcher.js` — wt/pwsh/cmd. Mac: Terminal.app via osascript. Linux: gnome-terminal etc.
-- `lib/sessions.js` — `tasklist`. Mac/Linux: `ps -eo pid,comm`.
+- The `--app=` browser detection and PATH-merge in `server.js` are Windows-shaped (Edge first, registry HKCU\Environment for PATH).
 
 Pattern for adding a platform: `switch (process.platform)` at each
 entry point in those files. Each platform branch is roughly 50-100
@@ -443,6 +470,6 @@ When adding features, the natural extension points:
 - **New REST routes**: `server.js` (keep under `/api/*`, use the `asyncH` wrapper, decide if it needs CORS by being in the allow-list).
 - **Frontend page**: `public/js/pages/<Name>Page.js`, route in `App.js`, sidebar nav item in `Sidebar.js`, heading in `state.js`'s `TAB_HEADINGS`.
 - **Persistent user data**: drop a JSON file under `~/.ccsm/` and use `lib/jsonStore.js`'s factory.
-- **Workspace lifecycle** (delete, rename): `lib/workspace.js`.
-- **Different launch modes**: `lib/launcher.js` — but check first whether the "one window per session" decision still holds.
+- **Different CLIs**: add a built-in to `DEFAULT_CLIS` in `lib/config.js`, an icon to `public/js/icons.js`, and (if the CLI persists transcripts on disk) a `profile` to `lib/cliSessionWatcher.js` and a list helper to `lib/localCliSessions.js`.
 - **A capability**: advertise via `/api/capabilities`. Frontend gates UI on `caps.<feature>`.
+- **Bumping the frontend**: just `npm version <patch|minor|major>` + push. The GH Pages workflow publishes to `/<new-version>/` and the router redirects users to it.

@@ -29,7 +29,33 @@ export const IconRefresh = ic('0 0 24 24', html`
 `, 16);
 
 export const IconChevronLeft = ic('0 0 24 24', html`<polyline points="15 18 9 12 15 6"/>`, 14);
+export const IconChevronRight = ic('0 0 24 24', html`<polyline points="9 18 15 12 9 6"/>`, 14);
+export const IconChevronUp = ic('0 0 24 24', html`<polyline points="18 15 12 9 6 15"/>`, 14);
 export const IconChevronDown = ic('0 0 24 24', html`<polyline points="6 9 12 15 18 9"/>`, 14);
+export const IconArrowRight = ic('0 0 24 24', html`<line x1="5" y1="12" x2="19" y2="12"/><polyline points="13 6 19 12 13 18"/>`, 14);
+export const IconHome = ic('0 0 24 24', html`
+  <path d="M3 11l9-8 9 8"/>
+  <path d="M5 10v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V10"/>
+`, 14);
+export const IconSparkle = ic('0 0 24 24', html`
+  <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/>
+  <path d="M19 17l.8 1.6L21 20l-1.2.4L19 22l-.8-1.6L17 20l1.2-.4z"/>
+`, 18);
+// "Workspace" — stacked layers / cube. Used for the launch-page
+// destination pill so it doesn't clash with the folder-tag pill that
+// uses IconFolder.
+export const IconWorkspace = ic('0 0 24 24', html`
+  <path d="M12 2l9 5-9 5-9-5z"/>
+  <path d="M3 12l9 5 9-5"/>
+  <path d="M3 17l9 5 9-5"/>
+`, 16);
+// Sidebar-toggle icon (panel-left). A rectangle with a vertical divider
+// near the left — universally recognised "show/hide sidebar" affordance
+// (Notion, Codex, Linear all use this shape).
+export const IconSidebarToggle = ic('0 0 24 24', html`
+  <rect x="3" y="4" width="18" height="16" rx="2"/>
+  <line x1="9" y1="4" x2="9" y2="20"/>
+`, 14);
 
 export const IconSearch = ic('0 0 24 24', html`
   <circle cx="11" cy="11" r="7"/>
@@ -45,6 +71,17 @@ export const IconPlus = ic('0 0 24 24', html`
   <line x1="12" y1="5" x2="12" y2="19"/>
   <line x1="5" y1="12" x2="19" y2="12"/>
 `, 22);
+
+// Folder + folder-open. Used in the sidebar session tree to mirror the
+// icon-first style of the top nav items. Open variant for expanded
+// folders so the chevron isn't doing double duty.
+export const IconFolder = ic('0 0 24 24', html`
+  <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>
+`, 16);
+export const IconFolderOpen = ic('0 0 24 24', html`
+  <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v1H3V7z"/>
+  <path d="M3 10h18l-2 7a2 2 0 0 1-2 1.5H5A2 2 0 0 1 3 17V10z"/>
+`, 16);
 
 export const IconPencil = ic('0 0 24 24', html`
   <path d="M12 20h9"/>
@@ -81,6 +118,31 @@ export const IconTerminal = ic('0 0 24 24', html`
   <line x1="12" y1="19" x2="20" y2="19"/>
 `, 18);
 
+// Git branch — for repo selection
+export const IconBranch = ic('0 0 24 24', html`
+  <line x1="6" y1="3" x2="6" y2="15"/>
+  <circle cx="18" cy="6" r="3"/>
+  <circle cx="6" cy="18" r="3"/>
+  <path d="M18 9a9 9 0 0 1-9 9"/>
+`, 18);
+
+// Brand-colored CLI marks. These use external SVG assets (full color),
+// rendered as <img> so the gradients / fills in the file are preserved.
+export const IconClaudeColor = () => html`
+  <img src="./assets/claude-color.svg" alt="" width="18" height="18" style="display:block" />`;
+export const IconCodexColor = () => html`
+  <img src="./assets/codex-color.svg" alt="" width="18" height="18" style="display:block" />`;
+export const IconCopilotColor = () => html`
+  <img src="./assets/copilot-color.svg" alt="" width="18" height="18" style="display:block" />`;
+
+// Pick the right icon for a CLI based on its type field.
+export const IconForCliType = (type) => {
+  if (type === 'claude')  return IconClaudeColor;
+  if (type === 'codex')   return IconCodexColor;
+  if (type === 'copilot') return IconCopilotColor;
+  return IconTerminal;
+};
+
 // Two variants used in the StarButton.
 export const StarOutline = ({ size = 15 } = {}) => html`
   <svg viewBox="0 0 24 24" width=${size} height=${size} fill="none" stroke="currentColor"
@@ -105,9 +167,10 @@ export const BrandMark = () => html`
   <svg viewBox="0 0 32 32" width="32" height="32">
     <rect x="2" y="4" width="28" height="24" rx="3" fill="#1a1815"/>
     <line x1="2" y1="10" x2="30" y2="10" stroke="#faf9f5" stroke-width="0.6" opacity="0.45"/>
-    <circle cx="6"   cy="7" r="1" fill="#faf9f5"/>
-    <circle cx="9.5" cy="7" r="1" fill="#faf9f5" opacity="0.65"/>
-    <circle cx="13"  cy="7" r="1" fill="#faf9f5" opacity="0.4"/>
+    <!-- macOS traffic-light style: red / yellow / green -->
+    <circle cx="6"   cy="7" r="1" fill="#ed6a5e"/>
+    <circle cx="9.5" cy="7" r="1" fill="#f4be4f"/>
+    <circle cx="13"  cy="7" r="1" fill="#62c554"/>
     <text x="16" y="19.5" text-anchor="middle" dominant-baseline="central"
           font-family="'JetBrains Mono', 'Cascadia Mono', 'Consolas', monospace"
           font-weight="700" font-size="10" fill="#faf9f5">ccsm</text>

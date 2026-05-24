@@ -1,7 +1,10 @@
 import { html } from '../html.js';
+import { useEffect, useState } from 'preact/hooks';
 import { serverHealth, installPrompt, isInstalledPwa } from '../state.js';
 import { setToast } from '../toast.js';
+import { api } from '../api.js';
 import { Card } from '../components/Card.js';
+import { PageTitleBar } from '../components/PageTitleBar.js';
 import { BrandMark, IconGithub, IconExternal } from '../icons.js';
 
 const REPO_URL = 'https://github.com/bakapiano/ccsm';
@@ -40,10 +43,87 @@ function InstallCard() {
     </${Card}>`;
 }
 
+function UpgradeCard() {
+  const [info, setInfo] = useState(null);    // { current, latest, updateAvailable, fetchedAt, error? }
+  const [checking, setChecking] = useState(true);
+  const [upgrading, setUpgrading] = useState(false);
+
+  const refresh = async (force = false) => {
+    setChecking(true);
+    try {
+      const r = await api('GET', '/api/version' + (force ? '?refresh=1' : ''));
+      setInfo(r);
+    } catch (e) {
+      setInfo({ error: e.message });
+    } finally {
+      setChecking(false);
+    }
+  };
+  useEffect(() => { refresh(false); }, []);
+
+  const onUpgrade = async () => {
+    if (!info?.updateAvailable) return;
+    setUpgrading(true);
+    try {
+      await api('POST', '/api/upgrade', { target: 'latest' });
+      setToast(`upgrading to v${info.latest} · backend will restart`);
+    } catch (e) {
+      setUpgrading(false);
+      setToast(e.message, 'error');
+    }
+    // No "finally" reset — the server is about to shut down, and the
+    // OfflineBanner takes over UI. When the router reroutes us to the new
+    // version's frontend, this component re-mounts fresh.
+  };
+
+  const current = info?.current || serverHealth.value.version || '';
+  const latest  = info?.latest;
+  const updateAvailable = !!info?.updateAvailable;
+
+  return html`
+    <${Card} title="Version">
+      <div class="about-version-row">
+        <div>
+          <div class="about-version-line">
+            Installed · <span class="mono">v${current || '?'}</span>
+          </div>
+          ${latest && !updateAvailable ? html`
+            <div class="muted-text" style="margin-top:4px">You're on the latest release.</div>
+          ` : null}
+          ${updateAvailable ? html`
+            <div class="about-update-line">
+              Update available · <span class="mono">v${latest}</span>
+            </div>
+          ` : null}
+          ${info?.error ? html`
+            <div class="muted-text" style="margin-top:4px">Couldn't reach npm registry.</div>
+          ` : null}
+        </div>
+        <div class="about-version-actions">
+          <button class="action subtle" onClick=${() => refresh(true)} disabled=${checking || upgrading}>
+            ${checking ? 'Checking…' : 'Check'}
+          </button>
+          ${updateAvailable ? html`
+            <button class="action primary" onClick=${onUpgrade} disabled=${upgrading}>
+              ${upgrading ? 'Upgrading…' : `Upgrade to v${latest}`}
+            </button>
+          ` : null}
+        </div>
+      </div>
+      ${upgrading ? html`
+        <p class="muted-text" style="margin-top:var(--s-3)">
+          Running <code>npm i -g @bakapiano/ccsm@latest</code>. The backend will restart automatically — you'll see the "Backend not running" screen briefly.
+        </p>
+      ` : null}
+    </${Card}>`;
+}
+
 export function AboutPage() {
   const version = serverHealth.value.version;
 
   return html`
+    <${PageTitleBar} title="About" />
+    <${UpgradeCard} />
     <${InstallCard} />
     <${Card} title="ccsm">
       <div class="about-block">
