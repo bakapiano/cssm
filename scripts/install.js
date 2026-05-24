@@ -116,11 +116,16 @@ try {
 if (process.env.CCSM_NO_AUTOLAUNCH !== '1') {
   try {
     const { spawn } = require('node:child_process');
-    const child = spawn(ccsmCmd, [], {
+    // Spawn `node bin/ccsm.js` directly — NOT ccsm.cmd. On Windows,
+    // child_process.spawn() with shell:false refuses .cmd files (throws
+    // EINVAL); using shell:true would flash a console window. Going
+    // through node + the JS entrypoint sidesteps both problems and
+    // matches exactly what the .cmd shim would have invoked.
+    const launcherJs = path.join(__dirname, '..', 'bin', 'ccsm.js');
+    const child = spawn(process.execPath, [launcherJs], {
       detached: true,
       stdio: 'ignore',
       windowsHide: true,
-      shell: false,
     });
     child.unref();
     log('launching ccsm now · check for the chromeless window');
