@@ -1,26 +1,28 @@
 /* ccsm · design tokens · v0.6 */
 
 :root {
-  /* Surfaces — cream with neutral whites. Sidebar shares the page bg
-     so they read as one continuous surface; separation is just the
-     hairline border on .sidebar. */
-  --bg:            #faf9f5;
+  /* Surfaces — pale near-white tinted with the default Ocean accent.
+     These match what state.js · applyAccentCssVars computes for the
+     #2f6fa3 default, so the first paint (before the inline accent
+     script in index.html runs) never flashes the old warm-cream bg. */
+  --bg:            #f6f8fa;
   --bg-elev:       #ffffff;
-  --sidebar-bg:    #faf9f5;
-  --sidebar-hover: #f0ece0;
-  --sidebar-active: #e8e3d5;
+  --sidebar-bg:    #f6f8fa;
+  --sidebar-hover: #e2ebf3;
+  --sidebar-active: #d3e1ed;
 
   /* Neutral UI chrome — borders, footer strip, etc. These are NEVER
      re-derived from the accent so dividers stay calm regardless of
      theme choice. */
   --ui-border:     #d8d4c6;
   --ui-border-soft: #e6e2d4;
-  --ui-bg:         #f0ece0;
+  --ui-bg:         #e2ebf3;
 
-  /* Borders & rules */
-  --border:        #e8e3d5;
-  --border-soft:   #ece8da;
-  --border-strong: #d4cdb8;
+  /* Borders & rules — tinted with the default Ocean accent to match
+     what state.js writes at boot. */
+  --border:        #d3e1ed;
+  --border-soft:   #d8e4ee;
+  --border-strong: #c0d5e5;
 
   /* Ink */
   --ink:        #1a1815;

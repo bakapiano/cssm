@@ -7,7 +7,7 @@
     <!-- Bleeds the cream surface into the Edge/Chrome --app= title bar
          so it visually disappears against the body. The browser does
          honor this in standalone app windows. -->
-    <meta name="theme-color" content="#faf9f5" />
+    <meta name="theme-color" content="#f6f8fa" />
     <meta name="color-scheme" content="light" />
     <title>CCSM</title>
     <!-- All asset paths are RELATIVE so the same index.html works when
@@ -15,14 +15,16 @@
          https://bakapiano.github.io/ccsm/v1/ (GH Pages hosted). -->
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <link rel="manifest" href="./manifest.webmanifest" />
-    <!-- Apply saved accent color BEFORE stylesheets/paint to avoid a
-         flash of the default theme. Mirrors applyAccentCssVars() in
-         state.js (only the bg-tinted vars that affect first paint). -->
+    <!-- Apply accent color BEFORE stylesheets/paint to avoid a flash
+         of the default warm-cream tokens.css bg. Mirrors
+         applyAccentCssVars() in state.js. Falls back to the Ocean
+         default (#2f6fa3) when no accent is saved so first-time
+         visitors also see the correct bg from the first frame. -->
     <script>
       (function () {
         try {
           var hex = localStorage.getItem('ccsm.accent');
-          if (!/^#[0-9a-fA-F]{6}$/.test(hex || '')) return;
+          if (!/^#[0-9a-fA-F]{6}$/.test(hex || '')) hex = '#2f6fa3';
           var n = parseInt(hex.slice(1), 16);
           var r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
           var toHex = function (v) { v = Math.max(0, Math.min(255, Math.round(v))); var s = v.toString(16); return s.length < 2 ? '0' + s : s; };
