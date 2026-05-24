@@ -49,10 +49,9 @@
   }
   .offline-mark {
     display: inline-flex; align-items: center; justify-content: center;
-    width: 40px; height: 40px; margin-bottom: 12px;
-    border-radius: 12px; background: var(--accent); color: #fff;
-    font-weight: 700; font-size: 18px; letter-spacing: -0.02em;
+    width: 48px; height: 48px; margin-bottom: 14px;
   }
+  .offline-mark svg { width: 100%; height: 100%; display: block; }
   .offline h1 { font-size: 16px; margin: 0 0 6px; font-weight: 600; }
   .offline p { margin: 0 0 16px; color: var(--ink-mid); line-height: 1.5; }
   .start-btn {
@@ -87,6 +86,32 @@
 
   /* Soft error (probed once but redirect target missing) */
   .err { color: var(--danger); font-size: 12px; margin-top: 12px; }
+
+  /* After a Start-click times out we assume ccsm isn't installed and
+     swap copy to nudge install. The default copy stays visible; we
+     just reveal an extra line. */
+  .install-nudge {
+    display: none;
+    margin: 12px 0 0;
+    padding: 10px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--ink-mid);
+    font-size: 12.5px;
+    line-height: 1.5;
+    text-align: left;
+  }
+  .offline.looks-uninstalled .install-nudge { display: block; }
+  .offline.looks-uninstalled .offline > p { display: none; }
+  .install-nudge code {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-family: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+    font-size: 11.5px;
+  }
 </style>
 </head>
 <body>
@@ -98,12 +123,27 @@
 
   <div id="offline" class="offline">
     <div class="offline-card">
-      <div class="offline-mark">C.</div>
+      <div class="offline-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32">
+          <rect x="2" y="4" width="28" height="24" rx="3" fill="#1a1815"/>
+          <line x1="2" y1="10" x2="30" y2="10" stroke="#faf9f5" stroke-width="0.6" opacity="0.45"/>
+          <circle cx="6"   cy="7" r="1" fill="#faf9f5"/>
+          <circle cx="9.5" cy="7" r="1" fill="#faf9f5" opacity="0.65"/>
+          <circle cx="13"  cy="7" r="1" fill="#faf9f5" opacity="0.4"/>
+          <text x="16" y="19.5" text-anchor="middle" dominant-baseline="central"
+                font-family="'Cascadia Mono', 'Consolas', 'Courier New', monospace"
+                font-weight="700" font-size="10" fill="#faf9f5">ccsm</text>
+        </svg>
+      </div>
       <h1>Backend not running</h1>
       <p>ccsm's local backend isn't reachable. Click Start to launch it —
       Windows may ask for permission once. Tick <em>Always allow</em>
       to silence future prompts.</p>
       <a class="start-btn" href="ccsm://start" id="start-link">Start ccsm</a>
+      <div class="install-nudge">
+        Nothing happened? ccsm doesn't look installed on this machine. Install it once via npm, then click <em>Try Start again</em>:
+        <div style="margin-top:8px"><code>npm i -g @bakapiano/ccsm</code></div>
+      </div>
       <details class="fallback">
         <summary>Don't have ccsm installed?</summary>
         <p>Install once via npm, then come back here:</p>
@@ -174,11 +214,21 @@ async function loop() {
 
 // Surface "started clicking" so we tighten the polling interval briefly
 // — the protocol handler usually has the server up within ~2-3s but the
-// first probe right after the click might still race.
+// first probe right after the click might still race. If the tight poll
+// runs out, we infer the protocol isn't registered (browsers don't
+// expose a direct API for that — privacy decision) and flip the card
+// over to an install hint.
 document.getElementById('start-link').addEventListener('click', () => {
   let n = 0;
   const tight = async () => {
-    if (n++ > 30) return;
+    if (n++ > 24) {                          // ~12s total
+      offlineEl.classList.add('looks-uninstalled');
+      const startBtn = document.getElementById('start-link');
+      if (startBtn) startBtn.textContent = 'Try Start again';
+      const det = document.querySelector('.fallback');
+      if (det && !det.open) det.open = true;
+      return;
+    }
     const v = await probeOnce();
     if (v) { goToVersion(v); return; }
     setTimeout(tight, 500);
