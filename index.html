@@ -220,10 +220,38 @@ function goToVersion(version) {
   location.replace(url);
 }
 
+// Try to silently launch the backend via ccsm:// — works on browsers
+// that allow programmatic protocol navigation when the page already has
+// a registered handler and the user has previously OK'd "Always allow".
+// On a cold first visit with no protocol registered, the iframe just
+// noops silently (no UI), and we fall through to the polling loop +
+// offline card. We give it ~6s before deciding to show the card.
+function silentProtocolLaunch() {
+  try {
+    const f = document.createElement('iframe');
+    f.style.display = 'none';
+    f.src = 'ccsm://start';
+    document.body.appendChild(f);
+    setTimeout(() => { try { f.remove(); } catch {} }, 1500);
+  } catch {}
+}
+
 async function loop() {
   const v = await probeOnce();
   if (v) { goToVersion(v); return; }
-  // Backend down: surface the Start-ccsm UI and keep polling.
+  // No backend on first probe. Before nagging with the offline card,
+  // try a silent ccsm:// launch and tight-poll for ~6s. Most users who
+  // already installed ccsm + OK'd the protocol prompt land here and
+  // never see the offline UI.
+  silentProtocolLaunch();
+  let n = 0;
+  while (n++ < 12) {
+    await new Promise((r) => setTimeout(r, 500));
+    const ok = await probeOnce();
+    if (ok) { goToVersion(ok); return; }
+  }
+  // Still nothing — surface the Start-ccsm UI and keep polling so a
+  // later click still wins.
   showOffline(null);
   setTimeout(loop, POLL_MS);
 }
