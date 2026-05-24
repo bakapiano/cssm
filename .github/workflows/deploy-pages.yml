@@ -66,6 +66,20 @@ jobs:
           grep -n 'ccsm-frontend-version' "out/$v/index.html"
           # Router lives at root
           cp -r pages-root/. out/
+          # Bake the package version into both manifests so the OS-installed
+          # PWA (Windows "Installed apps", Chromium app management) shows
+          # something other than the default 1.0.0. Done AFTER the
+          # pages-root copy so we don't get overwritten.
+          node -e "
+            const fs=require('fs');
+            for (const p of ['out/$v/manifest.webmanifest','out/manifest.webmanifest']) {
+              if (!fs.existsSync(p)) continue;
+              const j=JSON.parse(fs.readFileSync(p,'utf8'));
+              j.version='$v';
+              fs.writeFileSync(p, JSON.stringify(j, null, 2));
+              console.log('wrote',p,'version=$v');
+            }
+          "
 
       - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v4

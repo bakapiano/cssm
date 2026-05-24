@@ -28,9 +28,9 @@
   --ink-muted:  #8a8475;
   --ink-faint:  #b5af9d;
 
-  /* Accent — Claude warm copper. Slightly desaturated from raw #c45f3f so
-     solid-fill buttons feel calm against the cream surfaces, while still
-     reading as the same brand hue in star icons, focus rings, etc. */
+  /* Accent — Ocean blue. Calm and content-first. Users can override via
+     the Theme accent picker in Settings; that flow rewrites these vars
+     at runtime (state.js · applyAccentCssVars). */
   --accent:        #2f6fa3;
   --accent-deep:   #25577f;
   --accent-soft:   rgba(47, 111, 163, 0.10);
