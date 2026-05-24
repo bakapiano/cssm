@@ -55,7 +55,11 @@
   .offline h1 { font-size: 16px; margin: 0 0 6px; font-weight: 600; }
   .offline p { margin: 0 0 16px; color: var(--ink-mid); line-height: 1.5; }
   .start-btn {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-width: 132px;
     padding: 9px 18px;
     border-radius: 8px;
     background: var(--ink); color: var(--bg-elev);
@@ -63,6 +67,15 @@
     font-size: 13px; font-weight: 500;
   }
   .start-btn:hover { opacity: 0.92; }
+  .start-btn.is-launching { pointer-events: none; opacity: 0.85; }
+  .start-btn-spinner {
+    display: none;
+    width: 13px; height: 13px; border-radius: 50%;
+    border: 1.6px solid rgba(255,255,255,0.3);
+    border-top-color: #fff;
+    animation: spin 0.8s linear infinite;
+  }
+  .start-btn.is-launching .start-btn-spinner { display: inline-block; }
   .fallback {
     margin-top: 16px; font-size: 12px; color: var(--ink-muted);
     text-align: left;
@@ -139,7 +152,10 @@
       <p>ccsm's local backend isn't reachable. Click Start to launch it —
       Windows may ask for permission once. Tick <em>Always allow</em>
       to silence future prompts.</p>
-      <a class="start-btn" href="ccsm://start" id="start-link">Start ccsm</a>
+      <a class="start-btn" href="ccsm://start" id="start-link">
+        <span class="start-btn-spinner" aria-hidden="true"></span>
+        <span class="start-btn-label">Start ccsm</span>
+      </a>
       <div class="install-nudge">
         Nothing happened? ccsm doesn't look installed on this machine. Install it once via npm, then click <em>Try Start again</em>:
         <div style="margin-top:8px"><code>npm i -g @bakapiano/ccsm</code></div>
@@ -219,12 +235,16 @@ async function loop() {
 // expose a direct API for that — privacy decision) and flip the card
 // over to an install hint.
 document.getElementById('start-link').addEventListener('click', () => {
+  const btn = document.getElementById('start-link');
+  const label = btn.querySelector('.start-btn-label');
+  btn.classList.add('is-launching');
+  if (label) label.textContent = 'Starting…';
   let n = 0;
   const tight = async () => {
     if (n++ > 24) {                          // ~12s total
       offlineEl.classList.add('looks-uninstalled');
-      const startBtn = document.getElementById('start-link');
-      if (startBtn) startBtn.textContent = 'Try Start again';
+      btn.classList.remove('is-launching');
+      if (label) label.textContent = 'Try Start again';
       const det = document.querySelector('.fallback');
       if (det && !det.open) det.open = true;
       return;
