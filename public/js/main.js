@@ -3,32 +3,24 @@
 // the mount root.
 
 import { render } from 'preact';
-import { effect } from '@preact/signals';
 import { html } from './html.js';
-import { loadPersisted, clockTick, lastRefreshAt, installPrompt, isInstalledPwa, sidebarForcedCollapsed, serverHealth } from './state.js';
+import { loadPersisted, clockTick, lastRefreshAt, installPrompt, isInstalledPwa, sidebarForcedCollapsed } from './state.js';
 import { httpBase } from './backend.js';
 import { loadConfig, refreshAll, loadSessions, loadFolders, loadWorkspaces, pollHealth } from './api.js';
 import { setToast } from './toast.js';
 import { App } from './components/App.js';
 
 loadPersisted();
-// Window/tab title tracks the live backend version — "CCSM v0.10.1" once
-// /api/health responds, "CCSM" before then. A MutationObserver guards
-// against Chromium standalone builds that occasionally try to inject the
-// URL into the title bar; it accepts any "CCSM..." string we set and
-// resets anything else.
-function desiredTitle() {
-  const v = serverHealth.value.version;
-  return v ? `CCSM v${v}` : 'CCSM';
-}
-let expected = desiredTitle();
+// Window/tab title pinned to "CCSM". A MutationObserver guards against
+// Chromium standalone builds that occasionally try to inject the URL
+// into the title bar.
+const expected = 'CCSM';
 function lockTitle() { if (document.title !== expected) document.title = expected; }
 lockTitle();
 new MutationObserver(lockTitle).observe(
   document.querySelector('title') || document.head,
   { childList: true, subtree: true, characterData: true }
 );
-effect(() => { expected = desiredTitle(); lockTitle(); });
 render(html`<${App} />`, document.getElementById('app'));
 
 // PWA install affordance — Chromium fires `beforeinstallprompt` when the

@@ -1,6 +1,7 @@
 import { html } from '../html.js';
+import { signal } from '@preact/signals';
 import {
-  activeTab, sidebarCollapsed, sidebarForcedCollapsed, configDirty, capabilities, serverHealth,
+  activeTab, sidebarCollapsed, sidebarForcedCollapsed, configDirty, capabilities,
   sessions, folders, sessionsByFolder, foldersCollapsed, activeSessionId,
   selectTab, selectSession, toggleSidebar, toggleFolder, setSidebarWidth,
 } from '../state.js';
@@ -12,8 +13,17 @@ import { clockTick } from '../state.js';
 import { useDragSort } from './useDragSort.js';
 import {
   IconLaunch, IconConfigure,
-  IconSidebarToggle, IconPencil, IconClose, IconFolder, IconFolderOpen, BrandMark,
+  IconSidebarToggle, IconPencil, IconClose, IconFolder, IconFolderOpen, IconPlus, BrandMark,
 } from '../icons.js';
+
+// Module-level drag state for session → folder moves. Lives outside the
+// useDragSort hook (which handles same-list folder reorder) so the two
+// don't interfere — session drags and folder drags use disjoint state.
+// Folder key: folder.id for real folders, the literal string 'unsorted'
+// for the implicit top-level Unsorted bucket.
+const draggingSessionId = signal(null);
+const dragOverFolderKey = signal(null);
+const folderKey = (folder) => folder ? folder.id : 'unsorted';
 
 function NavItem({ tab, icon, label, dirty }) {
   const selected = activeTab.value === tab;
@@ -108,8 +118,22 @@ function SessionRow({ s }) {
     } catch (e) { setToast(e.message, 'error'); }
   };
 
+  const onDragStart = (ev) => {
+    draggingSessionId.value = s.id;
+    ev.dataTransfer.effectAllowed = 'move';
+    // Firefox refuses to start a drag without some data set.
+    try { ev.dataTransfer.setData('text/plain', s.id); } catch {}
+  };
+  const onDragEnd = () => {
+    draggingSessionId.value = null;
+    dragOverFolderKey.value = null;
+  };
+
   return html`
     <div class=${`tree-session${isActive ? ' is-active' : ''}${running ? ' is-running' : ' is-stopped'}`}
+         draggable=${true}
+         onDragStart=${onDragStart}
+         onDragEnd=${onDragEnd}
          onClick=${onClick}
          onContextMenu=${onContext}
          title=${`${title}\n${s.cwd}\n${running ? 'running' : 'stopped'} · ${s.cliId}`}>
@@ -124,7 +148,7 @@ function SessionRow({ s }) {
 }
 
 function FolderGroup({ folder, sessionList, dndHandle, dndRow }) {
-  const key = folder ? folder.id : 'unsorted';
+  const key = folderKey(folder);
   const collapsed = !!foldersCollapsed.value[key];
   const name = folder ? folder.name : 'Unsorted';
   const onToggle = () => toggleFolder(folder ? folder.id : null);
@@ -148,8 +172,55 @@ function FolderGroup({ folder, sessionList, dndHandle, dndRow }) {
     catch (e) { setToast(e.message, 'error'); }
   };
 
+  // Session-into-folder drop target. We don't go through useDragSort
+  // because that one is wired for folder-reorder. Folder reorder's
+  // handlers (in dndRow) short-circuit when no folder is being dragged,
+  // and our handlers below short-circuit when no session is being
+  // dragged — so composing both is safe.
+  const draggedSession = draggingSessionId.value
+    ? sessions.value.find((s) => s.id === draggingSessionId.value)
+    : null;
+  const sameFolder = draggedSession
+    && (draggedSession.folderId || null) === (folder ? folder.id : null);
+  const isOver = !sameFolder && dragOverFolderKey.value === key;
+
+  const onSessionDragOver = (ev) => {
+    if (!draggingSessionId.value || sameFolder) return;
+    ev.preventDefault();
+    ev.dataTransfer.dropEffect = 'move';
+    if (dragOverFolderKey.value !== key) dragOverFolderKey.value = key;
+  };
+  const onSessionDragLeave = (ev) => {
+    if (!draggingSessionId.value) return;
+    const rt = ev.relatedTarget;
+    if (rt && ev.currentTarget.contains(rt)) return;
+    if (dragOverFolderKey.value === key) dragOverFolderKey.value = null;
+  };
+  const onSessionDrop = (ev) => {
+    const sid = draggingSessionId.value;
+    draggingSessionId.value = null;
+    dragOverFolderKey.value = null;
+    if (!sid || sameFolder) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    setSessionFolder(sid, folder ? folder.id : null)
+      .then(() => setToast(folder ? `moved to ${folder.name}` : 'moved to Unsorted'))
+      .catch((e) => setToast(e.message, 'error'));
+  };
+
+  // Spread folder-reorder row handlers first, then compose our
+  // session-drop handlers on top so both fire.
+  const { onDragOver: rowOver, onDragLeave: rowLeave, onDrop: rowDrop, ...rowAttrs } = dndRow || {};
+  const composedOver = (ev) => { onSessionDragOver(ev); rowOver?.(ev); };
+  const composedLeave = (ev) => { onSessionDragLeave(ev); rowLeave?.(ev); };
+  const composedDrop = (ev) => { onSessionDrop(ev); rowDrop?.(ev); };
+
   return html`
-    <div class="tree-folder" ...${dndRow || {}}>
+    <div class=${`tree-folder${isOver ? ' is-session-drop-target' : ''}`}
+         ...${rowAttrs}
+         onDragOver=${composedOver}
+         onDragLeave=${composedLeave}
+         onDrop=${composedDrop}>
       <button class=${`tree-folder-head${collapsed ? '' : ' is-open'}`} onClick=${onToggle}
               ...${dndHandle || {}}>
         <span class="tree-folder-icon">
@@ -194,6 +265,9 @@ function SessionTree() {
     <div class="tree">
       <div class="tree-head">
         <span class="tree-head-label">Sessions</span>
+        <button class="tree-head-action" title="New folder" onClick=${onNewFolder}>
+          <${IconPlus} />
+        </button>
       </div>
       ${orderedFolders.map((f) => html`
         <${FolderGroup} key=${f.id} folder=${f}
@@ -236,9 +310,6 @@ export function Sidebar() {
                 onClick=${() => selectTab('about')}>
           <span class="brand-mark"><${BrandMark} /></span>
           <span class="brand-name">CCSM<span class="brand-dot">.</span></span>
-          ${serverHealth.value.version ? html`
-            <span class="brand-version">v${serverHealth.value.version}</span>
-          ` : null}
         </button>
       </div>
 

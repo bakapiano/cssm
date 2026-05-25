@@ -203,8 +203,9 @@ function spawnCliSession({ cli, cwd, sessionId, meta, extraArgs = [] }) {
     ? prefixArgs
     : [...prefixArgs, ...(cli.args || []), ...extraArgs];
   // Merge user-scope PATH from registry into the env we hand the PTY.
-  const env = { ...process.env, ...(cli.env || {}) };
-  if (mergedUserPath) env.PATH = mergedUserPath;
+  // spawnEnv() also strips duplicate path-case keys so our override
+  // doesn't get shadowed by the inherited `Path` from process.env.
+  const env = spawnEnv(cli.env);
   const trySpawn = (executable) => webTerminal.spawn({
     id: sessionId,
     command: executable,
@@ -327,6 +328,26 @@ function buildMergedUserPath() {
   }
 }
 mergedUserPath = buildMergedUserPath();
+
+// Hand back a fresh env for spawning a child, with PATH overridden by
+// our merged user PATH and any duplicate case variants of "path"
+// stripped first. Windows env lookup is case-insensitive but the env
+// block we hand CreateProcess is an ordered byte buffer — if both
+// `Path` (inherited from process.env, OS canonical case) and `PATH`
+// (our override) are present, Windows resolves to whichever comes
+// first in the block. Node's Object.keys preserves insertion order,
+// so the inherited `Path` would win and our merged override silently
+// disappear. Strip all path-shaped keys first, then add the merge.
+function spawnEnv(extraEnv = {}) {
+  const env = { ...process.env, ...extraEnv };
+  if (process.platform === 'win32') {
+    for (const k of Object.keys(env)) {
+      if (k.toLowerCase() === 'path') delete env[k];
+    }
+  }
+  if (mergedUserPath) env.PATH = mergedUserPath;
+  return env;
+}
 
 // ---- config ----
 
