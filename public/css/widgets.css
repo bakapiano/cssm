@@ -980,6 +980,38 @@
   gap: 6px;
   margin-top: 4px;
 }
+.entity-test-button { margin-right: auto; }
+
+.entity-test-result {
+  margin-top: 4px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+}
+.entity-test-result.is-ok    { border-color: rgba(74, 138, 74, 0.4); background: rgba(74, 138, 74, 0.06); }
+.entity-test-result.is-fail  { border-color: rgba(183, 63, 63, 0.4); background: rgba(183, 63, 63, 0.06); }
+.entity-test-summary {
+  font-family: var(--body);
+  font-weight: 500;
+  color: var(--ink);
+}
+.entity-test-result.is-fail .entity-test-summary { color: var(--red); }
+.entity-test-out {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-mid);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow-y: auto;
+}
+.entity-test-out.is-stderr { color: var(--ink-muted); border-top: 1px dashed var(--border); padding-top: 4px; }
 
 .icon-radio {
   display: grid;

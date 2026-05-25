@@ -10,7 +10,7 @@ import {
 } from '../state.js';
 import {
   api, loadConfig, loadWorkspaces, loadFolders,
-  createCli, updateCli, deleteCli, setDefaultCli,
+  createCli, updateCli, deleteCli, setDefaultCli, testCli,
   createRepo, updateRepo, deleteRepo,
   createFolder, renameFolder, deleteFolder, reorderFolders,
   deleteWorkspace,
@@ -252,6 +252,7 @@ export function ConfigurePage() {
     ${edit?.kind === 'cli-new' ? html`
       <${EntityFormModal} title="New CLI" fields=${cliFieldsFor({ creating: true })}
         onClose=${close} submitLabel="Create"
+        onTest=${(v) => testCli({ command: v.command, shell: v.shell, type: v.type })}
         onSubmit=${async (v) => {
           try { await createCli(v); setToast(`created CLI · ${v.name}`); }
           catch (e) { setToast(e.message, 'error'); throw e; }
@@ -259,7 +260,7 @@ export function ConfigurePage() {
 
     ${edit?.kind === 'cli-edit' ? html`
       <${EntityFormModal} title=${`Edit ${edit.payload.name}`} fields=${cliFieldsFor()}
-        readOnlyKeys=${edit.payload.builtin ? ['type', 'command'] : []}
+        readOnlyKeys=${edit.payload.builtin ? ['type'] : []}
         initial=${{
           ...edit.payload,
           args: (edit.payload.args || []).join(' '),
@@ -267,6 +268,7 @@ export function ConfigurePage() {
           resumeIdArgs: (edit.payload.resumeIdArgs || []).join(' '),
         }}
         onClose=${close}
+        onTest=${(v) => testCli({ command: v.command, shell: v.shell, type: v.type })}
         onSubmit=${async (v) => {
           try {
             const patch = {
@@ -275,8 +277,6 @@ export function ConfigurePage() {
               resumeArgs: typeof v.resumeArgs === 'string' ? v.resumeArgs.split(/\s+/).filter(Boolean) : v.resumeArgs,
               resumeIdArgs: typeof v.resumeIdArgs === 'string' ? v.resumeIdArgs.split(/\s+/).filter(Boolean) : v.resumeIdArgs,
             };
-            // command is locked on builtins — drop any tampered value.
-            if (edit.payload.builtin) delete patch.command;
             await updateCli(edit.payload.id, patch);
             setToast('saved');
           } catch (e) { setToast(e.message, 'error'); throw e; }

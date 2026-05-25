@@ -86,6 +86,22 @@ export function TerminalView({ terminalId }) {
     } catch (e) {
       console.warn('[ccsm] WebGL addon failed, using DOM renderer:', e);
     }
+    // Ctrl+C with a selection: by default xterm.js sends \x03 AND the
+    // browser's own copy event fires — so the user gets "selection
+    // copied to clipboard" AND the running CLI gets SIGINT. Mirror
+    // VSCode/Windows Terminal behaviour: when there's a selection,
+    // suppress \x03 and let the copy event do its thing. With no
+    // selection, Ctrl+C still sends \x03 normally.
+    term.attachCustomKeyEventHandler((ev) => {
+      if (ev.type === 'keydown'
+          && ev.ctrlKey && !ev.shiftKey && !ev.altKey && !ev.metaKey
+          && ev.key.toLowerCase() === 'c'
+          && term.hasSelection()) {
+        return false;
+      }
+      return true;
+    });
+
     const host = hostRef.current;
     term.open(host);
     // Defer fit one tick so the container has measured layout

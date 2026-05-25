@@ -18,10 +18,13 @@ import { Modal } from './Modal.js';
 export function EntityFormModal({
   title, fields, initial = {}, submitLabel = 'Save',
   readOnlyKeys = [],
-  onSubmit, onClose, danger,
+  onSubmit, onClose, onTest, testLabel = 'Test',
+  danger,
 }) {
   const [draft, setDraft] = useState(() => ({ ...initialFrom(fields), ...initial }));
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null);
 
   const isReadOnly = (key) => readOnlyKeys.includes(key);
 
@@ -34,6 +37,20 @@ export function EntityFormModal({
     try { await onSubmit?.(draft); onClose?.(); }
     catch { /* caller toasts; stay open */ }
     finally { setSaving(false); }
+  };
+
+  const runTest = async () => {
+    if (!onTest) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const r = await onTest(draft);
+      setTestResult(r);
+    } catch (e) {
+      setTestResult({ ok: false, spawnError: String(e?.message || e) });
+    } finally {
+      setTesting(false);
+    }
   };
 
   return html`
@@ -87,7 +104,26 @@ export function EntityFormModal({
             ${f.hint && f.type !== 'checkbox' ? html`
               <span class="entity-field-hint">${f.hint}</span>` : null}
           </label>`)}
+        ${testResult ? html`
+          <div class=${`entity-test-result ${testResult.ok ? 'is-ok' : 'is-fail'}`}>
+            <div class="entity-test-summary">
+              ${testResult.ok ? '✓' : '✗'} ${testResult.ok ? 'works' : 'failed'}
+              ${typeof testResult.exitCode === 'number' ? html` · exit ${testResult.exitCode}` : null}
+              ${typeof testResult.durationMs === 'number' ? html` · ${testResult.durationMs}ms` : null}
+              ${testResult.timedOut ? html` · timed out` : null}
+              ${testResult.matchedType === true ? html` · type matches ${testResult.expectedType}` : null}
+              ${testResult.matchedType === false ? html` · type mismatch (expected ${testResult.expectedType})` : null}
+            </div>
+            ${testResult.spawnError ? html`<pre class="entity-test-out">${testResult.spawnError}</pre>` : null}
+            ${testResult.stdout ? html`<pre class="entity-test-out">${testResult.stdout}</pre>` : null}
+            ${testResult.stderr ? html`<pre class="entity-test-out is-stderr">${testResult.stderr}</pre>` : null}
+          </div>` : null}
         <div class="entity-form-actions">
+          ${onTest ? html`
+            <button type="button" class="action small subtle entity-test-button"
+                    disabled=${testing} onClick=${runTest}>
+              ${testing ? 'Testing…' : testLabel}
+            </button>` : null}
           <button type="button" class="action small subtle" onClick=${onClose}>Cancel</button>
           <button type="submit" class=${`action small ${danger ? 'danger' : 'primary'}`}
                   disabled=${saving}>

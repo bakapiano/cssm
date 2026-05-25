@@ -56,47 +56,6 @@ function SessionRow({ s }) {
     }
   };
 
-  const onContext = async (ev) => {
-    ev.preventDefault();
-    ev.stopPropagation();
-    // Quick menu: Rename / Move / Delete. We use sequential prompts
-    // to avoid building a real context-menu component for now.
-    const action = await ccsmPrompt(
-      `${title} · ${running ? 'running' : 'stopped'}\nType: rename / move / delete / resume / cancel`,
-      'cancel', { title: s.id, okLabel: 'OK' });
-    if (!action) return;
-    const verb = action.trim().toLowerCase();
-    if (verb === 'rename') {
-      const next = await ccsmPrompt('New title', title, { title: 'Rename session', okLabel: 'Save' });
-      if (next === null) return;
-      try { await setSessionTitle(s.id, next.trim()); setToast('renamed'); }
-      catch (e) { setToast(e.message, 'error'); }
-    } else if (verb === 'move') {
-      // Move to a folder by name
-      const folderNames = folders.value.map((f) => f.name).join(', ');
-      const target = await ccsmPrompt(
-        `Move to which folder? (empty = Unsorted)\nExisting: ${folderNames || '(none)'}`,
-        '', { title: 'Move', okLabel: 'Move' });
-      if (target === null) return;
-      const t = target.trim();
-      const folder = t ? folders.value.find((f) => f.name.toLowerCase() === t.toLowerCase()) : null;
-      if (t && !folder) { setToast(`no folder named "${t}"`, 'error'); return; }
-      try { await setSessionFolder(s.id, folder ? folder.id : null); setToast('moved'); }
-      catch (e) { setToast(e.message, 'error'); }
-    } else if (verb === 'delete') {
-      const ok = await ccsmConfirm(`Delete session ${title}? PTY will be killed if alive.`, {
-        title: 'Delete session', okLabel: 'Delete', danger: true });
-      if (!ok) return;
-      try {
-        await deleteSession(s.id);
-        if (activeSessionId.value === s.id) activeSessionId.value = null;
-      } catch (e) { setToast(e.message, 'error'); }
-    } else if (verb === 'resume' && !running) {
-      try { await resumeSession(s.id); selectSession(s.id); }
-      catch (e) { setToast(e.message, 'error'); }
-    }
-  };
-
   const onRenameClick = async (ev) => {
     ev.preventDefault();
     ev.stopPropagation();
@@ -135,7 +94,6 @@ function SessionRow({ s }) {
          onDragStart=${onDragStart}
          onDragEnd=${onDragEnd}
          onClick=${onClick}
-         onContextMenu=${onContext}
          title=${`${title}\n${s.cwd}\n${running ? 'running' : 'stopped'} · ${s.cliId}`}>
       <span class=${`tree-dot ${running ? 'is-running' : 'is-stopped'}`}></span>
       <span class="tree-label">${title}</span>

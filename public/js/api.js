@@ -28,11 +28,11 @@ export async function loadConfig() {
 export async function updateCli(id, patch) {
   const cfg = S.config.value || (await api('GET', '/api/config'));
   const target = (cfg.clis || []).find((c) => c.id === id);
-  // Built-in CLIs lock down identity-defining fields. UI already greys these
-  // out; we belt-and-braces here so a tampered request from elsewhere
-  // can't change them either.
+  // Built-in CLIs lock down structural fields (id + builtin flag) but
+  // allow command edits — users routinely need to point at an absolute
+  // path (e.g. C:\Users\you\.local\bin\claude.exe) or a wrapper script
+  // when the bare name isn't on the spawn-time PATH.
   if (target?.builtin) {
-    delete patch.command;
     delete patch.id;
     delete patch.builtin;
   }
@@ -50,6 +50,14 @@ export async function updateCli(id, patch) {
   const saved = await api('PUT', '/api/config', next);
   S.config.value = saved;
   return id;
+}
+
+// Probe a (possibly-unsaved) CLI config: spawn its command with
+// `--version`, capture output, see if it looks like the claimed type.
+// `args` is intentionally ignored server-side — runtime flags can
+// disturb a quick probe.
+export async function testCli({ command, shell, type }) {
+  return api('POST', '/api/clis/test', { command, shell, type });
 }
 
 export async function deleteCli(id) {
