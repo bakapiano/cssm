@@ -443,6 +443,66 @@ fresh server. So `npm i -g @bakapiano/ccsm@latest && ccsm` is one
 seamless step. From the frontend, the About page's Upgrade button
 achieves the same thing without leaving the browser.
 
+### Release process
+
+Three artifacts ship per release: a git tag, a GitHub Release, and an
+npm publish. The whole thing is CI-driven — you never `npm publish`
+locally — but it requires you to drive three steps in order:
+
+1. **Commit + bump + push (local).** Stage everything, write a release
+   commit, then bump + tag + push:
+
+   ```powershell
+   git add -A
+   git commit -m "vX.Y.Z: <one-line summary>
+
+   <body>
+
+   Co-Authored-By: Claude ..."
+   npm --prefix . version <patch|minor|major> -m "v%s"
+   git push origin main
+   git push origin vX.Y.Z
+   ```
+
+   `npm version` writes the new version into `package.json` +
+   `package-lock.json`, creates its OWN commit, and tags it. The
+   `--prefix .` is needed on Windows where bare `npm version` errors on
+   the global `%APPDATA%\npm\package.json`. Push BOTH `main` and the
+   tag — pushing only main skips the tag-triggered draft-release
+   workflow.
+
+2. **Tag-push fires two workflows automatically:**
+   - `Deploy frontend to GitHub Pages` → publishes `pages-root/` → `/`
+     and `public/` → `/<X.Y.Z>/` on `gh-pages`. Old `/<X.Y.Z>/`
+     subdirs stay forever (`keep_files: true`).
+   - `Draft GitHub Release on tag push` → creates a **draft** release
+     for `vX.Y.Z`.
+
+3. **Publish the draft (manual one-liner):**
+
+   ```powershell
+   gh release edit vX.Y.Z --draft=false
+   ```
+
+   This flips the draft to "published", which fires the third workflow
+   — `Publish to npm` — using the `NPM_TOKEN` repo secret with
+   provenance. The runner needs ~30s; verify with
+   `gh run watch <run-id> --exit-status` or just refresh npmjs.com.
+
+The reason for the draft step instead of auto-publishing on tag push:
+gives you a chance to abort a half-baked tag (delete the draft +
+`git push --delete origin vX.Y.Z`) before it lands on the public
+registry.
+
+### Why we don't publish from the local box
+
+`npm publish` from a dev machine works in principle but skips
+provenance attestation (the sigstore + GitHub OIDC binding that npm
+displays as a "Provenance" badge on the package page). CI has the OIDC
+token; you don't. Local publish also wouldn't have the consistent
+runner state, so reproducible-build claims fall apart. The pipeline
+exists; use it.
+
 ## Cross-platform
 
 Today: Windows-first.
