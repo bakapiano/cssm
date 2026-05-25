@@ -6,7 +6,7 @@
 import { html } from '../html.js';
 import { useEffect, useState } from 'preact/hooks';
 import { activeSessionId, sessions, config, selectTab, selectSession, clockTick } from '../state.js';
-import { resumeSession, deleteSession, setSessionTitle } from '../api.js';
+import { resumeSession, clearResumeFailure, deleteSession, setSessionTitle } from '../api.js';
 import { setToast } from '../toast.js';
 import { ccsmConfirm, ccsmPrompt } from '../dialog.js';
 import { TerminalView } from '../components/TerminalView.js';
@@ -64,7 +64,11 @@ export function SessionsPage() {
       activeSessionId.value = null;
     } catch (e) { setToast(e.message, 'error'); }
   };
-  const onRetry = () => setRetryNonce((n) => n + 1);
+  const onRetry = () => {
+    clearResumeFailure(session.id);
+    setResumeError(null);
+    setRetryNonce((n) => n + 1);
+  };
 
   return html`
     <${PageTitleBar} title=${html`

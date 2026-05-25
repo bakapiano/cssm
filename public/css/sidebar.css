@@ -569,6 +569,11 @@ body.is-resizing-sidebar * {
 .tree-session.is-running .tree-dot::after {
   background: var(--green);
 }
+/* Working = CLI is actively writing to its transcript (i.e. thinking
+   or printing tokens). Idle stays green; working flips to blue. */
+.tree-session.is-running.is-working .tree-dot::after {
+  background: var(--blue, #4a73a5);
+}
 .tree-label {
   flex: 1;
   white-space: nowrap;

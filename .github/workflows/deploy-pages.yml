@@ -66,14 +66,16 @@ jobs:
           grep -n 'ccsm-frontend-version' "out/$v/index.html"
           # Router lives at root
           cp -r pages-root/. out/
-          # Bake the package version into both manifests so the OS-installed
-          # PWA (Windows "Installed apps", Chromium app management) shows
-          # something other than the default 1.0.0. Done AFTER the
-          # pages-root copy so we don't get overwritten.
+          # Bake the package version into the root PWA manifest so
+          # Windows "Installed apps" + Chromium app management show
+          # something other than the default 1.0.0. Per-version pages
+          # link at ../manifest.webmanifest (the root one) so the
+          # installed PWA is scoped to /ccsm/ and a redirect between
+          # versions stays in-scope (no surprise address bar).
           node -e "
             const fs=require('fs');
-            for (const p of ['out/$v/manifest.webmanifest','out/manifest.webmanifest']) {
-              if (!fs.existsSync(p)) continue;
+            const p='out/manifest.webmanifest';
+            if (fs.existsSync(p)) {
               const j=JSON.parse(fs.readFileSync(p,'utf8'));
               j.version='$v';
               fs.writeFileSync(p, JSON.stringify(j, null, 2));

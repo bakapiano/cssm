@@ -109,7 +109,6 @@ ccsm/
 │   ├── persistedSessions.js  # ~/.ccsm/sessions.json — the source of truth
 │   ├── folders.js            # sidebar tree
 │   ├── localCliSessions.js   # scan ~/.claude · ~/.codex · ~/.copilot
-│   ├── cliSessionWatcher.js  # capture upstream session UUID after spawn
 │   ├── workspace.js          # ws-N allocation + repo clones
 │   ├── webTerminal.js        # node-pty pool · WebSocket bridge
 │   ├── jsonStore.js · config.js

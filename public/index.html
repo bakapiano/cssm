@@ -13,7 +13,13 @@
          served from localhost:7777/ (backend bundle) AND from
          https://bakapiano.github.io/ccsm/v1/ (GH Pages hosted). -->
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
-    <link rel="manifest" href="./manifest.webmanifest" />
+    <!-- Point at the ROOT manifest (/ccsm/manifest.webmanifest) so the
+         installable PWA is scoped to /ccsm/, covering every per-version
+         subdir. If we shipped a per-version manifest the browser would
+         scope the PWA to /ccsm/X.Y.Z/ — then the version-guard's
+         redirect to ../ on backend upgrade would fall out of scope and
+         the OS would re-show an address bar. -->
+    <link rel="manifest" href="../manifest.webmanifest" />
     <!-- Apply accent color BEFORE stylesheets/paint to avoid a flash
          of the default warm-cream tokens.css bg. Mirrors
          applyAccentCssVars() in state.js. Falls back to the Ocean

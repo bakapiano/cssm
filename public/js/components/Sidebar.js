@@ -89,13 +89,13 @@ function SessionRow({ s }) {
   };
 
   return html`
-    <div class=${`tree-session${isActive ? ' is-active' : ''}${running ? ' is-running' : ' is-stopped'}`}
+    <div class=${`tree-session${isActive ? ' is-active' : ''}${running ? ' is-running' : ' is-stopped'}${running && s.activity === 'working' ? ' is-working' : ''}`}
          draggable=${true}
          onDragStart=${onDragStart}
          onDragEnd=${onDragEnd}
          onClick=${onClick}
-         title=${`${title}\n${s.cwd}\n${running ? 'running' : 'stopped'} · ${s.cliId}`}>
-      <span class=${`tree-dot ${running ? 'is-running' : 'is-stopped'}`}></span>
+         title=${`${title}\n${s.cwd}\n${running ? (s.activity === 'working' ? 'working' : 'idle') : 'stopped'} · ${s.cliId}`}>
+      <span class=${`tree-dot ${running ? 'is-running' : 'is-stopped'}${running && s.activity === 'working' ? ' is-working' : ''}`}></span>
       <span class="tree-label">${title}</span>
       <span class="tree-session-actions">
         <button class="tree-session-action" title="rename" onClick=${onRenameClick}><${IconPencil} /></button>

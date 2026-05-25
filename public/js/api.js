@@ -43,7 +43,6 @@ export async function updateCli(id, patch) {
     clis: (cfg.clis || []).map((c) => c.id === id ? {
       ...c, ...patch,
       args: toArr(patch.args, c.args),
-      resumeArgs: toArr(patch.resumeArgs, c.resumeArgs || []),
       shell: ['direct', 'pwsh', 'cmd'].includes(patch.shell ?? c.shell) ? (patch.shell ?? c.shell) : 'direct',
     } : c),
   };
@@ -102,7 +101,7 @@ export async function setDefaultCli(id) {
 
 // Add a new CLI to config.clis and return its id. Generates a fresh id
 // from the command name + an integer suffix when collisions exist.
-export async function createCli({ name, command, args, resumeArgs, shell, type }) {
+export async function createCli({ name, command, args, shell, type }) {
   const cfg = S.config.value || (await api('GET', '/api/config'));
   const base = (name || command || 'cli').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'cli';
   let id = base, n = 1;
@@ -115,9 +114,8 @@ export async function createCli({ name, command, args, resumeArgs, shell, type }
       name: (name || command || id).trim(),
       command: (command || '').trim(),
       args: toArr(args),
-      resumeArgs: toArr(resumeArgs),
       shell: ['direct', 'pwsh', 'cmd'].includes(shell) ? shell : 'direct',
-      type: ['claude', 'codex', 'other'].includes(type) ? type : 'other',
+      type: ['claude', 'codex', 'copilot', 'other'].includes(type) ? type : 'other',
     }],
   };
   const saved = await api('PUT', '/api/config', next);
@@ -206,8 +204,19 @@ export async function deleteSession(sessionId) {
 // dedup the backend gets two concurrent /resume requests and may spawn
 // two PTYs against the same record. Cleared on resolve/reject.
 const resumeInFlight = new Map(); // sessionId → Promise
+// Sticky failure cache: once a resume fails, subsequent calls reject
+// immediately with the cached error until clearResumeFailure(id) is
+// called. Stops the SessionsPage auto-resume effect from looping on a
+// session whose CLI keeps exiting (bad command, missing flag, etc.).
+const resumeFailed = new Map(); // sessionId → Error
+
+export function clearResumeFailure(sessionId) {
+  resumeFailed.delete(sessionId);
+}
 
 export function resumeSession(sessionId) {
+  const failed = resumeFailed.get(sessionId);
+  if (failed) return Promise.reject(failed);
   const cached = resumeInFlight.get(sessionId);
   if (cached) return cached;
   const p = (async () => {
@@ -216,7 +225,10 @@ export function resumeSession(sessionId) {
     return r.launched;
   })();
   resumeInFlight.set(sessionId, p);
-  p.finally(() => { resumeInFlight.delete(sessionId); });
+  p.then(
+    () => { resumeInFlight.delete(sessionId); },
+    (e) => { resumeInFlight.delete(sessionId); resumeFailed.set(sessionId, e); },
+  );
   return p;
 }
 
@@ -262,6 +274,10 @@ export async function listLocalCliSessions(cliType, { offset = 0, limit = 30 } =
 export async function adoptSession({ cliId, cliSessionId, cwd, title, folderId }) {
   const r = await api('POST', '/api/sessions/adopt', { cliId, cliSessionId, cwd, title, folderId });
   return r;
+}
+
+export async function restartBackend() {
+  return api('POST', '/api/restart');
 }
 
 export async function pollHealth() {

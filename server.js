@@ -3,6 +3,7 @@
 
 const path = require('node:path');
 const os = require('node:os');
+const crypto = require('node:crypto');
 const express = require('express');
 
 const { loadConfig, saveConfig, DATA_DIR } = require('./lib/config');
@@ -15,7 +16,13 @@ const {
 const webTerminal = require('./lib/webTerminal');
 const persistedSessions = require('./lib/persistedSessions');
 const folders = require('./lib/folders');
-const cliSessionWatcher = require('./lib/cliSessionWatcher');
+// Upstream CLI session-id capture used to live in lib/cliSessionWatcher
+// (poll the CLI's transcript dir, match by cwd). It's gone now — for
+// CLIs that expose a "set the UUID for a new session" flag (claude +
+// copilot both have --session-id <uuid>) we pre-generate the id in
+// /api/sessions/new and pass it via cli.newSessionIdArgs. For CLIs
+// without that flag (codex) we just don't capture an id; the user
+// gets cli.resumeArgs (--continue / resume --last) on relaunch.
 const localCliSessions = require('./lib/localCliSessions');
 
 // One unified exit path: kill PTY children, then exit. v1.0 dropped the
@@ -216,93 +223,19 @@ function spawnCliSession({ cli, cwd, sessionId, meta, extraArgs = [] }) {
     meta: { ...meta, cliId: cli.id, cliName: cli.name },
     onData: () => { persistedSessions.touch(sessionId).catch(() => {}); },
     onExit: ({ exitCode }) => {
-      stopWatcher(sessionId);
       persistedSessions.markExited(sessionId, exitCode).catch(() => {});
     },
   });
   try {
     const entry = trySpawn(exe);
-    maybeWatchCliSessionId({ cli, cwd, ccsmSessionId: sessionId });
     return entry;
   } catch (e) {
     if (fallbackExe && /ENOENT|cannot find|not recognized/i.test(String(e && e.message || e))) {
       const entry = trySpawn(fallbackExe);
-      maybeWatchCliSessionId({ cli, cwd, ccsmSessionId: sessionId });
       return entry;
     }
     throw e;
   }
-}
-
-// Start a fs-watch on the CLI's transcript directory so we can capture
-// the upstream session UUID for later precise --resume. Only kicks off
-// for CLI types we know how to watch (claude / codex / copilot).
-//
-// If the watcher times out (5 min with no transcript ever written), we
-// assume the user closed the CLI before it persisted anything — so
-// there's nothing to resume to and the ccsm record is dead weight. Drop
-// the persistedSessions row and kill the PTY if it somehow lingers.
-//
-// IMPORTANT: if the record already has a captured cliSessionId (typical
-// for `resume` and for `adopt`-imported records), skip the watcher
-// entirely — there's nothing left to capture, and the timeout-cleanup
-// would otherwise wipe a perfectly good record after 5 minutes of
-// "no new transcript".
-// Active upstream-session-id watchers, keyed by ccsm session id. We hold
-// onto the cleanup fn returned by cliSessionWatcher so we can tear them
-// down when the PTY exits or the record is deleted — a still-running
-// watcher whose ccsm session is gone would otherwise match a *future*
-// session that happens to spawn in the same cwd and stamp the wrong id
-// onto a dead record (or worse, onto a re-created record reusing memory).
-const activeWatchers = new Map(); // ccsmSessionId → cleanupFn
-
-function stopWatcher(ccsmSessionId) {
-  const cleanup = activeWatchers.get(ccsmSessionId);
-  if (!cleanup) return;
-  activeWatchers.delete(ccsmSessionId);
-  try { cleanup(); } catch {}
-}
-
-async function maybeWatchCliSessionId({ cli, cwd, ccsmSessionId }) {
-  if (!cli || !['claude', 'codex', 'copilot'].includes(cli.type)) return;
-  // If a previous watcher was still alive on this id (e.g. fast restart),
-  // tear it down first.
-  stopWatcher(ccsmSessionId);
-  let excludeIds = [];
-  try {
-    const all = await persistedSessions.loadAll();
-    const existing = all.find((s) => s.id === ccsmSessionId);
-    if (existing?.cliSessionId) {
-      console.log(`[cliSessionId] skip watcher · ${cli.type} session already known (${existing.cliSessionId})`);
-      return;
-    }
-    // Other ccsm sessions' upstream UUIDs — exclude so the watcher
-    // doesn't misclaim a sibling's actively-touched transcript.
-    excludeIds = all
-      .filter((s) => s.id !== ccsmSessionId && s.cliSessionId)
-      .map((s) => s.cliSessionId);
-  } catch {}
-  const cleanup = cliSessionWatcher.captureSessionId({
-    cliType: cli.type,
-    cwd,
-    excludeIds,
-    onCapture: (cliSessionId) => {
-      activeWatchers.delete(ccsmSessionId);
-      persistedSessions.update(ccsmSessionId, { cliSessionId }).catch((e) => {
-        console.error('[cliSessionId] save failed:', e.message);
-      });
-      console.log(`[cliSessionId] captured ${cli.type} session ${cliSessionId} for ccsm ${ccsmSessionId}`);
-    },
-    onTimeout: () => {
-      activeWatchers.delete(ccsmSessionId);
-      console.warn(`[cliSessionId] timeout · removing ccsm session ${ccsmSessionId} (no ${cli.type} transcript)`);
-      try { webTerminal.kill(ccsmSessionId); } catch {}
-      persistedSessions.remove(ccsmSessionId).catch((e) => {
-        console.error('[cliSessionId] remove failed:', e.message);
-      });
-    },
-  });
-  if (cleanup) activeWatchers.set(ccsmSessionId, cleanup);
 }
 
 // Read user PATH from registry once at boot, prepend to process PATH.
@@ -539,6 +472,17 @@ app.get('/api/sessions', asyncH(async (_req, res) => {
       s.status = 'exited';
     }
   }
+  // Per-session activity probe (transcript mtime → working/idle). Cheap
+  // when cached — most calls are a single fs.stat(). Only runs for
+  // running sessions; exited ones get 'unknown'.
+  const cfg = await loadConfig();
+  const cliById = new Map((cfg.clis || []).map((c) => [c.id, c]));
+  const { probeActivity } = require('./lib/cliActivity');
+  await Promise.all(list.map(async (s) => {
+    if (s.status !== 'running') { s.activity = 'unknown'; return; }
+    try { s.activity = await probeActivity(s, cliById.get(s.cliId)); }
+    catch { s.activity = 'unknown'; }
+  }));
   res.json({ sessions: list, takenAt: Date.now() });
 }));
 
@@ -553,9 +497,9 @@ app.put('/api/sessions/:id', asyncH(async (req, res) => {
 
 app.delete('/api/sessions/:id', asyncH(async (req, res) => {
   // Kill PTY first if it's still alive, then drop the record.
-  stopWatcher(req.params.id);
   try { webTerminal.kill(req.params.id); } catch {}
   const removed = await persistedSessions.remove(req.params.id);
+  try { require('./lib/cliActivity').releaseSession(req.params.id); } catch {}
   res.json({ removed });
 }));
 
@@ -735,6 +679,28 @@ app.post('/api/sessions/new', async (req, res) => {
     const shouldLaunch = req.body && req.body.launch !== false;
     let launched = null;
     if (shouldLaunch) {
+      // Pre-assign the upstream CLI session UUID so we never have to
+      // poll/scan the transcript dir to find out what id the CLI picked.
+      //   - claude / copilot expose `--session-id <uuid>` natively.
+      //   - codex has no flag, but accepts `resume <uuid>` against a
+      //     pre-existing rollout file. We seed a fake file (see
+      //     lib/codexSeed.js) so the first launch is a resume against
+      //     our seed; codex then appends to the same file.
+      const newIdTpl = Array.isArray(cli.newSessionIdArgs) ? cli.newSessionIdArgs : [];
+      const preAssignedId = newIdTpl.length > 0 ? crypto.randomUUID() : null;
+      const newSessionArgs = preAssignedId
+        ? newIdTpl.map((a) => (typeof a === 'string' ? a.replace(/<id>/g, preAssignedId) : a))
+        : [];
+
+      if (preAssignedId && cli.type === 'codex') {
+        try {
+          const { seedCodexSession } = require('./lib/codexSeed');
+          await seedCodexSession({ id: preAssignedId, cwd: workspace.path, cli });
+        } catch (e) {
+          return fail(`codex seed failed: ${e.message}`);
+        }
+      }
+
       // Create the persistedSessions record FIRST so spawnCliSession can
       // use its id as the PTY id (matching ids simplify resume/attach).
       const record = await persistedSessions.create({
@@ -744,6 +710,7 @@ app.post('/api/sessions/new', async (req, res) => {
         repos: wantedRepos.map((r) => r.name),
         folderId: (req.body && req.body.folderId) || null,
         title: '',
+        cliSessionId: preAssignedId || undefined,
       });
       try {
         const entry = spawnCliSession({
@@ -751,6 +718,7 @@ app.post('/api/sessions/new', async (req, res) => {
           cwd: workspace.path,
           sessionId: record.id,
           meta: { title: workspace.name, workspace: workspace.name, cwd: workspace.path },
+          extraArgs: newSessionArgs,
         });
         await persistedSessions.markRunning(record.id, entry.meta.pid);
         launched = { id: record.id, pid: entry.meta.pid, cliId: cli.id };
@@ -875,8 +843,10 @@ app.post('/api/sessions/:id/resume', asyncH(async (req, res) => {
   const cli = pickCli(cfg, record.cliId);
   if (!cli) return res.status(400).json({ error: `CLI ${record.cliId} no longer configured` });
   try {
-    // Prefer precise --resume <cliSessionId> when we have one captured;
-    // fall back to cli.resumeArgs (--continue / resume --last) otherwise.
+    // Resume always uses the captured upstream session UUID. With the
+    // pre-assignment refactor every ccsm-launched session has one (via
+    // newSessionIdArgs flag or the codex seed trick), and adopted
+    // sessions inherit theirs from the disk scan.
     const extraArgs = buildResumeArgs(cli, record);
     const entry = spawnCliSession({
       cli,
@@ -892,18 +862,19 @@ app.post('/api/sessions/:id/resume', asyncH(async (req, res) => {
   }
 }));
 
-// Build the args appended on resume:
-//   When ccsm has captured the upstream CLI's session UUID and the CLI
-//   defines `resumeIdArgs` (e.g. ['--resume', '<id>']), we substitute the
-//   <id> placeholder and use those for a precise resume. Otherwise we
-//   fall back to `cli.resumeArgs` (e.g. ['--continue']).
+// Build the args appended on resume: substitute the captured upstream
+// session UUID into cli.resumeIdArgs (e.g. ['--resume', '<id>'] →
+// ['--resume', '7c28...']). Throws if either piece is missing — by
+// design every ccsm session has a pre-assigned id, so missing one means
+// something upstream is misconfigured (adopt without id, user-added CLI
+// without resumeIdArgs, etc.) and we surface that instead of silently
+// re-launching without the id.
 function buildResumeArgs(cli, record) {
   const id = record.cliSessionId;
   const tpl = Array.isArray(cli.resumeIdArgs) ? cli.resumeIdArgs : [];
-  if (id && tpl.length > 0) {
-    return tpl.map((a) => (typeof a === 'string' ? a.replace(/<id>/g, id) : a));
-  }
-  return Array.isArray(cli.resumeArgs) ? cli.resumeArgs : [];
+  if (!id) throw new Error(`session ${record.id} has no cliSessionId — cannot resume`);
+  if (tpl.length === 0) throw new Error(`CLI ${cli.id} has no resumeIdArgs configured`);
+  return tpl.map((a) => (typeof a === 'string' ? a.replace(/<id>/g, id) : a));
 }
 
 // ---- capabilities probe ----
@@ -938,6 +909,59 @@ app.post('/api/shutdown', (_req, res) => {
   res.json({ ok: true, bye: 'shutting down' });
   setImmediate(() => gracefulShutdown('/api/shutdown'));
 });
+
+// Restart: in production, spawn the restart-helper detached then
+// gracefulShutdown — the helper waits for the port to free and respawns
+// `ccsm.cmd` (with CCSM_NO_BROWSER so we don't pop a new window — the
+// frontend bounces through OfflineBanner / version router back into the
+// new backend). In dev (CCSM_DEV=1, set by scripts/dev.js), we skip the
+// helper entirely: just gracefulShutdown. scripts/dev.js sees its child
+// exit and respawns `node --watch server.js` from the checkout, picking
+// up any code changes.
+let restartInFlight = false;
+app.post('/api/restart', asyncH(async (_req, res) => {
+  if (restartInFlight) {
+    return res.status(409).json({ error: 'restart already in progress' });
+  }
+  restartInFlight = true;
+
+  if (process.env.CCSM_DEV === '1') {
+    res.json({ ok: true, started: true, mode: 'dev' });
+    setImmediate(() => gracefulShutdown('restart (dev)'));
+    return;
+  }
+
+  const fsp = require('node:fs/promises');
+  const helperSrc = path.join(__dirname, 'scripts', 'restart-helper.js');
+  const helperTmp = path.join(os.tmpdir(), `ccsm-restart-${process.pid}-${Date.now()}.js`);
+  try {
+    await fsp.copyFile(helperSrc, helperTmp);
+  } catch (e) {
+    restartInFlight = false;
+    return res.status(500).json({ error: `helper copy failed: ${e.message}` });
+  }
+  const args = [helperTmp, String(currentPort), String(process.pid)];
+  res.json({ ok: true, started: true, helper: helperTmp });
+
+  setImmediate(() => {
+    const { spawn } = require('node:child_process');
+    try {
+      const child = spawn(process.execPath, args, {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+        shell: false,
+      });
+      child.unref();
+      console.log(`[restart] helper pid=${child.pid}, shutting down`);
+    } catch (e) {
+      console.error('[restart] helper spawn failed:', e.message);
+      restartInFlight = false;
+      return;
+    }
+    setTimeout(() => gracefulShutdown('restart'), 500);
+  });
+}));
 
 // ---- version / upgrade ----
 // `/api/version` reports the installed version (= pkg.version) and, if

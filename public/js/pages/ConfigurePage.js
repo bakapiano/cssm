@@ -13,7 +13,7 @@ import {
   createCli, updateCli, deleteCli, setDefaultCli, testCli,
   createRepo, updateRepo, deleteRepo,
   createFolder, renameFolder, deleteFolder, reorderFolders,
-  deleteWorkspace,
+  deleteWorkspace, restartBackend,
 } from '../api.js';
 import { setToast } from '../toast.js';
 import { ccsmConfirm } from '../dialog.js';
@@ -26,10 +26,10 @@ import { IconPlus, IconPencil, IconClose, IconTerminal, IconFolder, IconBranch, 
 // Type → smart defaults. Choosing a type in the form auto-fills resumeArgs
 // (and command if blank) so users don't need to remember the per-CLI flag.
 const CLI_TYPE_DEFAULTS = {
-  claude:  { command: 'claude',  resumeArgs: '--continue',    resumeIdArgs: '--resume <id>' },
-  codex:   { command: 'codex',   resumeArgs: 'resume --last', resumeIdArgs: 'resume <id>' },
-  copilot: { command: 'copilot', resumeArgs: '--continue',    resumeIdArgs: '--resume <id>' },
-  other:   { resumeArgs: '', resumeIdArgs: '' },
+  claude:  { command: 'claude',  resumeIdArgs: '--resume <id>', newSessionIdArgs: '--session-id <id>' },
+  codex:   { command: 'codex',   resumeIdArgs: 'resume <id>',   newSessionIdArgs: 'resume <id>' },
+  copilot: { command: 'copilot', resumeIdArgs: '--resume <id>', newSessionIdArgs: '--session-id <id>' },
+  other:   { resumeIdArgs: '', newSessionIdArgs: '' },
 };
 
 function cliFieldsFor({ creating } = {}) {
@@ -45,7 +45,7 @@ function cliFieldsFor({ creating } = {}) {
       onChange: creating ? (v, next) => {
         const d = CLI_TYPE_DEFAULTS[v];
         if (!d) return null;
-        const patch = { resumeArgs: d.resumeArgs, resumeIdArgs: d.resumeIdArgs };
+        const patch = { resumeIdArgs: d.resumeIdArgs, newSessionIdArgs: d.newSessionIdArgs };
         if (!next.command || !next.command.trim()) patch.command = d.command || '';
         if (!next.name || !next.name.trim()) {
           patch.name = v === 'claude' ? 'Claude Code'
@@ -60,10 +60,10 @@ function cliFieldsFor({ creating } = {}) {
     { key: 'command', label: 'Command', mono: true, placeholder: 'ccp / claude / ...', required: true },
     { key: 'args', label: 'Args (space-separated)', mono: true, placeholder: '',
       hint: 'Used on every launch.' },
-    { key: 'resumeArgs', label: 'Resume args (fallback)', mono: true, placeholder: '--continue',
-      hint: 'Used when ccsm has no captured upstream session id — usually "open last session in cwd".' },
+    { key: 'newSessionIdArgs', label: 'New session id args', mono: true, placeholder: '--session-id <id>',
+      hint: 'ccsm pre-generates a UUID and substitutes it for <id> on first launch — the upstream CLI session id is known immediately.' },
     { key: 'resumeIdArgs', label: 'Resume by id args', mono: true, placeholder: '--resume <id>',
-      hint: 'Use <id> as the placeholder for the captured upstream session UUID. Leave empty to always use the fallback.' },
+      hint: 'Used on every resume. Substitutes <id> with the captured session UUID.' },
     { key: 'shell', label: 'Shell', type: 'select', default: 'direct', options: [
       { value: 'direct', label: 'direct (real .exe / .cmd)' },
       { value: 'pwsh',   label: 'pwsh (PowerShell aliases & functions)' },
@@ -145,6 +145,10 @@ export function ConfigurePage() {
         <div class="field">
           <span class="label">Theme accent</span>
           <${AccentPicker} />
+        </div>
+        <div class="field">
+          <span class="label">Backend</span>
+          <${RestartButton} />
         </div>
       </div>
     </${Section}>
@@ -264,8 +268,8 @@ export function ConfigurePage() {
         initial=${{
           ...edit.payload,
           args: (edit.payload.args || []).join(' '),
-          resumeArgs: (edit.payload.resumeArgs || []).join(' '),
           resumeIdArgs: (edit.payload.resumeIdArgs || []).join(' '),
+          newSessionIdArgs: (edit.payload.newSessionIdArgs || []).join(' '),
         }}
         onClose=${close}
         onTest=${(v) => testCli({ command: v.command, shell: v.shell, type: v.type })}
@@ -274,8 +278,8 @@ export function ConfigurePage() {
             const patch = {
               ...v,
               args: typeof v.args === 'string' ? v.args.split(/\s+/).filter(Boolean) : v.args,
-              resumeArgs: typeof v.resumeArgs === 'string' ? v.resumeArgs.split(/\s+/).filter(Boolean) : v.resumeArgs,
               resumeIdArgs: typeof v.resumeIdArgs === 'string' ? v.resumeIdArgs.split(/\s+/).filter(Boolean) : v.resumeIdArgs,
+              newSessionIdArgs: typeof v.newSessionIdArgs === 'string' ? v.newSessionIdArgs.split(/\s+/).filter(Boolean) : v.newSessionIdArgs,
             };
             await updateCli(edit.payload.id, patch);
             setToast('saved');
@@ -417,6 +421,32 @@ const PRESETS = [
   { name: 'Slate',         hex: '#4a5563' },
   { name: 'Crimson',       hex: '#b73f3f' },
 ];
+
+function RestartButton() {
+  const [busy, setBusy] = useState(false);
+  const onClick = async () => {
+    const ok = await ccsmConfirm(
+      'Restart the ccsm backend? Active sessions will be killed and reattached on next launch.',
+      { okLabel: 'Restart', danger: true });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await restartBackend();
+      setToast('restarting backend…');
+    } catch (e) {
+      setBusy(false);
+      setToast(e.message, 'error');
+    }
+  };
+  return html`
+    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+      <button class="action" disabled=${busy} onClick=${onClick}>
+        ${busy ? 'Restarting…' : 'Restart backend'}
+      </button>
+      <span class="hint">Stops the server, then spawns a fresh one on the same port.</span>
+    </div>
+  `;
+}
 
 function AccentPicker() {
   const current = (accentColor.value || '').toLowerCase();

@@ -43,17 +43,50 @@ const env = {
   CCSM_HOME: DEV_HOME,
   CCSM_PORT: DEV_PORT,
   CCSM_NO_BROWSER: '1',
+  // Marks the running server as "launched by dev.js" so /api/restart can
+  // skip the production restart-helper path (which respawns the global
+  // `ccsm.cmd` and would replace our --watch checkout server). In dev
+  // mode the server just process.exit(0)s and this script respawns it.
+  CCSM_DEV: '1',
 };
 
 const serverPath = path.join(__dirname, '..', 'server.js');
-const child = spawn(process.execPath, ['--watch', serverPath], {
-  env,
-  stdio: 'inherit',
-});
 
-const forward = (sig) => () => child.kill(sig);
-process.on('SIGINT', forward('SIGINT'));
-process.on('SIGTERM', forward('SIGTERM'));
-child.on('exit', (code, signal) => {
-  process.exit(signal ? 1 : (code ?? 0));
-});
+let current = null;
+let stopping = false;
+
+function spawnServer() {
+  // Don't use `node --watch` here — its restart-on-exit semantics are
+  // "wait for a file change after a clean exit", so calling
+  // process.exit(0) from /api/restart leaves --watch idling forever
+  // until the user touches a file. We do our own respawn-on-exit
+  // (below) which handles both the restart-by-exit path AND crashes,
+  // and the dev/api SSE endpoint still gives us frontend hot-reload
+  // without needing --watch for backend code (each restart pulls fresh
+  // require() cache anyway since this is a new process).
+  const child = spawn(process.execPath, [serverPath], {
+    env,
+    stdio: 'inherit',
+  });
+  child.on('exit', (code, signal) => {
+    if (stopping) {
+      process.exit(signal ? 1 : (code ?? 0));
+      return;
+    }
+    // Server asked to restart (POST /api/restart → gracefulShutdown +
+    // exit 0). Respawn — node --watch picks up any code changes that
+    // landed in the meantime. A small delay lets the port fully release.
+    console.log(`[dev] server exited (code=${code} signal=${signal || ''}) · respawning`);
+    setTimeout(() => { current = spawnServer(); }, 500);
+  });
+  return child;
+}
+
+const stop = (sig) => () => {
+  stopping = true;
+  if (current) current.kill(sig);
+};
+process.on('SIGINT', stop('SIGINT'));
+process.on('SIGTERM', stop('SIGTERM'));
+
+current = spawnServer();
