@@ -10,7 +10,6 @@ const {
   findOrCreateWorkspace,
   ensureReposInWorkspace,
   isInside,
-  dirSize,
 } = require('./lib/workspace');
 const webTerminal = require('./lib/webTerminal');
 const persistedSessions = require('./lib/persistedSessions');
@@ -490,17 +489,14 @@ app.get('/api/browse', asyncH(async (req, res) => {
   });
 }));
 
-app.get('/api/workspaces', asyncH(async (_req, res) => {
+app.get('/api/workspaces', asyncH(async (req, res) => {
   const cfg = await loadConfig();
-  // listWorkspaces calls into the old "in use = ~/.claude/sessions cwd
-  // matches workspace path" logic; we just want the directory listing
-  // now, so pass empty busy paths.
   const workspaces = await listWorkspaces({
     workDir: cfg.workDir,
     repos: cfg.repos,
   });
-  // Recompute inUse based on persistedSessions instead. A workspace is
-  // in use iff any RUNNING ccsm session lives at-or-inside it.
+  // Recompute inUse based on persistedSessions: a workspace is in use
+  // iff any RUNNING ccsm session lives at-or-inside it.
   const allSess = await persistedSessions.loadAll();
   const busy = new Set(
     allSess.filter((s) => s.status === 'running').map((s) => path.resolve(s.cwd).toLowerCase())
@@ -511,12 +507,6 @@ app.get('/api/workspaces', asyncH(async (_req, res) => {
       .filter((s) => s.status === 'running' && path.resolve(s.cwd).toLowerCase() === path.resolve(w.path).toLowerCase())
       .map((s) => s.id);
   }
-  // Compute sizes in parallel. Cheap on the typical workspace
-  // (a few repo clones) and the page is opened infrequently.
-  await Promise.all(workspaces.map(async (w) => {
-    try { w.size = await dirSize(w.path); }
-    catch { w.size = null; }
-  }));
   res.json({ workDir: cfg.workDir, repos: cfg.repos, workspaces });
 }));
 
@@ -679,6 +669,7 @@ app.get('/api/cli-sessions/:cliType', asyncH(async (req, res) => {
     localCliSessions.listPaginated(type, { offset, limit }),
     persistedSessions.loadAll(),
   ]);
+
   const adoptedIds = new Set(adopted.map((s) => s.cliSessionId).filter(Boolean));
   const sessions = page.sessions.map((s) => ({
     ...s,
@@ -1086,7 +1077,7 @@ function openInBrowser(url) {
     ? apiUrl
     : 'https://bakapiano.github.io/ccsm/';
   frontendUrl = FRONTEND_URL;
-  console.log(`ccsm listening on ${apiUrl}${port !== cfg.port ? `  (requested ${cfg.port}, was taken)` : ''}`);
+  console.log(`ccsm listening on ${apiUrl}${port !== preferredPort ? `  (requested ${preferredPort}, was taken)` : ''}`);
   console.log(`frontend at      ${FRONTEND_URL}`);
   console.log(`data dir:        ${DATA_DIR}`);
   console.log(`work dir:        ${cfg.workDir}`);

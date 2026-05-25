@@ -34,14 +34,18 @@
   position: fixed;
   inset: 0;
   z-index: 200;
-  background: rgba(26, 24, 21, 0.42);
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
+  /* Opaque scrim only — no backdrop-filter. `backdrop-filter: blur()` on
+     top of a complex page (sidebar tree + xterm canvas + scrollable
+     lists) forced a re-composite of the entire viewport every frame
+     during the open animation; on this machine that pegged the GPU and
+     made the modal feel "stuck". A slightly more opaque scrim conveys
+     the same "page is suspended" signal at zero GPU cost. */
+  background: rgba(26, 24, 21, 0.5);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: var(--s-6);
-  animation: backdrop-in .18s ease;
+  animation: backdrop-in .12s ease-out;
 }
 @keyframes backdrop-in { from { opacity: 0; } to { opacity: 1; } }
 
@@ -54,15 +58,18 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow:
-    0 32px 80px -20px rgba(26, 24, 21, 0.32),
-    0 8px 20px -4px rgba(26, 24, 21, 0.10),
-    0 0 0 1px rgba(26, 24, 21, 0.02);
-  animation: modal-in .22s cubic-bezier(.4, 0, .2, 1);
+  /* Single shadow instead of three. The previous stack had an 80px-radius
+     drop-shadow that the GPU has to redraw on every transform tick during
+     modal-in — visually negligible difference, big perf win. */
+  box-shadow: 0 12px 32px -8px rgba(26, 24, 21, 0.28);
+  /* Pin a compositor layer + give the animated transform a stable rect so
+     the browser doesn't reflow on each frame. */
+  will-change: transform, opacity;
+  animation: modal-in .14s ease-out;
 }
 @keyframes modal-in {
-  from { opacity: 0; transform: translateY(12px) scale(0.98); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 .modal-head {

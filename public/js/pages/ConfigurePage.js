@@ -118,9 +118,6 @@ export function ConfigurePage() {
     }
   }, [cfg]);
 
-  // Refresh workspace list when the page mounts so sizes are fresh.
-  useEffect(() => { loadWorkspaces().catch(() => {}); }, []);
-
   if (!cfg || !general) return null;
 
   const saveGeneral = async (patch) => {
@@ -363,14 +360,6 @@ function EntityList({ items, onAdd, onEdit, onDelete, onActivate, emptyHint, dnd
 }
 
 // ── Workspace list ───────────────────────────────────────────────────
-function fmtBytes(n) {
-  if (n == null) return '—';
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
-
 function WorkspaceList() {
   const ws = workspaces.value || [];
   if (ws.length === 0) {
@@ -379,7 +368,7 @@ function WorkspaceList() {
   const onDelete = async (w) => {
     if (w.inUse) return setToast(`"${w.name}" is in use by a running session`, 'error');
     const ok = await ccsmConfirm(
-      `Delete workspace "${w.name}"? This removes the directory and all repo clones inside (${fmtBytes(w.size)}).`,
+      `Delete workspace "${w.name}"? This removes the directory and all repo clones inside.`,
       { okLabel: 'Delete', danger: true },
     );
     if (!ok) return;
@@ -403,7 +392,6 @@ function WorkspaceList() {
             </span>
             <span class="entity-row-secondary">
               <span class="mono">${w.path}</span>
-              · ${fmtBytes(w.size)}
               ${repoCount > 0 ? html` · ${repoCount} ${repoCount === 1 ? 'repo' : 'repos'}` : null}
             </span>
           </span>
