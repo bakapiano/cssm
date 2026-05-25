@@ -1,5 +1,4 @@
 {
-  "id": "/ccsm/",
   "name": "CCSM",
   "short_name": "CCSM",
   "version": "0.11.0",
@@ -11,8 +10,8 @@
     "window-controls-overlay",
     "standalone"
   ],
-  "background_color": "#ffffff",
-  "theme_color": "#ffffff",
+  "background_color": "#f6f8fa",
+  "theme_color": "#f6f8fa",
   "icons": [
     {
       "src": "favicon.svg",
