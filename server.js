@@ -672,15 +672,27 @@ app.get('/api/cli-sessions/:cliType', asyncH(async (req, res) => {
   if (!['claude', 'codex', 'copilot'].includes(type)) {
     return res.status(400).json({ error: `unsupported cli type: ${type}` });
   }
-  const [discovered, adopted] = await Promise.all([
-    localCliSessions.listForType(type),
+  const offset = Math.max(0, Number(req.query.offset) || 0);
+  const limit  = Math.min(200, Math.max(1, Number(req.query.limit) || 30));
+
+  const [page, adopted] = await Promise.all([
+    localCliSessions.listPaginated(type, { offset, limit }),
     persistedSessions.loadAll(),
   ]);
   const adoptedIds = new Set(adopted.map((s) => s.cliSessionId).filter(Boolean));
-  const items = discovered
-    .map((s) => ({ ...s, adopted: adoptedIds.has(s.cliSessionId) }))
-    .sort((a, b) => b.mtime - a.mtime);
-  res.json({ sessions: items });
+  const sessions = page.sessions.map((s) => ({
+    ...s,
+    adopted: adoptedIds.has(s.cliSessionId),
+  }));
+  res.json({
+    sessions,
+    totalActive: page.totalActive,
+    totalNonActive: page.totalNonActive,
+    total: page.totalActive + page.totalNonActive,
+    offset: page.offset,
+    limit: page.limit,
+    hasMore: page.hasMore,
+  });
 }));
 
 // ---- adopt: create a ccsm record pointing at an existing CLI session ----
@@ -1037,6 +1049,12 @@ function openInBrowser(url) {
   } catch (e) {
     console.error('[ccsm] could not reconcile persisted sessions:', e.message);
   }
+
+  // Prewarm `tasklist` cache used by the import modal's "live" markers —
+  // it takes ~500ms on Windows and is the single biggest contributor to
+  // a slow Import dialog cold-open. Fire in the background; the lib also
+  // starts its own 15s refresh loop.
+  try { localCliSessions.prewarmLivePids(['claude.exe']); } catch {}
 
   if (webTerminal.available) {
     let WebSocketServer;

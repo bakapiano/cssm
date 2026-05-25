@@ -35,23 +35,72 @@ const TABS = [
   { type: 'copilot', label: 'Copilot', Icon: IconCopilotColor },
 ];
 
+const PAGE_SIZE = 30;
+
 export function AdoptModal({ onClose, onAdopted }) {
   const [tab, setTab] = useState('claude');
-  const [cache, setCache] = useState({});             // { type: { loading, error, items } }
-  const [adopting, setAdopting] = useState(null);     // cliSessionId being adopted
+  // cache shape per tab: { loading, loadingMore, error, items, offset,
+  //                       hasMore, totalActive, totalNonActive }
+  const [cache, setCache] = useState({});
+  const [adopting, setAdopting] = useState(null);
   const [query, setQuery] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [cliOverride, setCliOverride] = useState({}); // type → user-picked cli id
+  const [cliOverride, setCliOverride] = useState({});
   const cliAnchorRef = useRef(null);
 
   const load = async (type, { force = false } = {}) => {
-    if (!force && cache[type] && !cache[type].error) return;
-    setCache((c) => ({ ...c, [type]: { loading: true, items: [], error: null } }));
+    const existing = cache[type];
+    if (!force && existing && !existing.error && existing.items.length) return;
+    setCache((c) => ({
+      ...c,
+      [type]: { loading: true, loadingMore: false, items: [], error: null,
+                offset: 0, hasMore: false, totalActive: 0, totalNonActive: 0 },
+    }));
     try {
-      const items = await listLocalCliSessions(type);
-      setCache((c) => ({ ...c, [type]: { loading: false, items, error: null } }));
+      const r = await listLocalCliSessions(type, { offset: 0, limit: PAGE_SIZE });
+      setCache((c) => ({
+        ...c,
+        [type]: {
+          loading: false, loadingMore: false, error: null,
+          items: r.sessions,
+          offset: r.offset + r.sessions.filter((s) => !s.active).length, // advance past hydrated non-active
+          hasMore: r.hasMore,
+          totalActive: r.totalActive,
+          totalNonActive: r.totalNonActive,
+        },
+      }));
     } catch (e) {
-      setCache((c) => ({ ...c, [type]: { loading: false, items: [], error: e.message } }));
+      setCache((c) => ({
+        ...c,
+        [type]: { loading: false, loadingMore: false, items: [], error: e.message,
+                  offset: 0, hasMore: false, totalActive: 0, totalNonActive: 0 },
+      }));
+    }
+  };
+
+  const loadMore = async () => {
+    const cur = cache[tab];
+    if (!cur || cur.loadingMore || !cur.hasMore) return;
+    setCache((c) => ({ ...c, [tab]: { ...c[tab], loadingMore: true } }));
+    try {
+      const r = await listLocalCliSessions(tab, { offset: cur.offset, limit: PAGE_SIZE });
+      setCache((c) => {
+        const entry = c[tab];
+        const existingIds = new Set(entry.items.map((x) => x.cliSessionId));
+        const additions = r.sessions.filter((s) => !existingIds.has(s.cliSessionId));
+        return {
+          ...c,
+          [tab]: {
+            ...entry,
+            loadingMore: false,
+            items: [...entry.items, ...additions],
+            offset: cur.offset + additions.filter((s) => !s.active).length,
+            hasMore: r.hasMore,
+          },
+        };
+      });
+    } catch (e) {
+      setCache((c) => ({ ...c, [tab]: { ...c[tab], loadingMore: false, error: e.message } }));
     }
   };
 
@@ -101,7 +150,10 @@ export function AdoptModal({ onClose, onAdopted }) {
     return [...top, ...others];
   }, [clis, matchingClis, tab]);
 
-  const state = cache[tab] || { loading: true, items: [], error: null };
+  const state = cache[tab] || {
+    loading: true, loadingMore: false, items: [], error: null,
+    offset: 0, hasMore: false, totalActive: 0, totalNonActive: 0,
+  };
   const items = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return state.items;
@@ -111,6 +163,7 @@ export function AdoptModal({ onClose, onAdopted }) {
     });
   }, [state.items, query]);
 
+  const totalKnown = state.totalActive + state.totalNonActive;
   const unimportedCount = state.items.filter((it) => !it.adopted).length;
 
   const adopt = async (item) => {
@@ -224,12 +277,13 @@ export function AdoptModal({ onClose, onAdopted }) {
           ` : items.length === 0 ? html`
             <div class="adopt-empty">No matches for "${query}".</div>
           ` : html`
-            <ul class="adopt-list">
+            <ul class="adopt-list" data-shown=${items.length} data-total=${totalKnown}>
               ${items.map((it) => html`
-                <li class=${`adopt-row${it.adopted ? ' is-adopted' : ''}`}
+                <li class=${`adopt-row${it.adopted ? ' is-adopted' : ''}${it.active ? ' is-active' : ''}`}
                     key=${it.cliSessionId}>
                   <div class="adopt-row-main">
                     <div class="adopt-row-title">
+                      ${it.active ? html`<span class="adopt-row-live" title="A CLI process has this session open right now">● live</span>` : null}
                       ${it.summary || html`<span class="adopt-row-untitled">untitled session</span>`}
                     </div>
                     <div class="adopt-row-meta">
@@ -253,6 +307,22 @@ export function AdoptModal({ onClose, onAdopted }) {
                   </div>
                 </li>`)}
             </ul>
+            ${state.hasMore && !query ? html`
+              <div class="adopt-loadmore">
+                <button type="button" class="action subtle"
+                        disabled=${state.loadingMore}
+                        onClick=${loadMore}>
+                  ${state.loadingMore ? 'Loading…'
+                    : `Load ${Math.min(PAGE_SIZE, state.totalNonActive - state.offset)} more · ${state.items.length} / ${totalKnown}`}
+                </button>
+              </div>` : !query && state.items.length > 0 ? html`
+              <div class="adopt-loadmore adopt-loadmore-done">
+                All ${totalKnown} sessions loaded
+              </div>` : null}
+            ${query && state.hasMore ? html`
+              <div class="adopt-loadmore adopt-loadmore-hint">
+                Searching ${state.items.length} loaded · clear search and Load more to see older sessions
+              </div>` : null}
           `}
         </div>
       </div>

@@ -231,10 +231,22 @@ export async function refreshAll() {
 }
 
 // List existing CLI sessions discovered on disk for a given cli type.
-// Returns array of { cliType, cliSessionId, cwd, mtime, summary, adopted }.
-export async function listLocalCliSessions(cliType) {
-  const r = await api('GET', `/api/cli-sessions/${cliType}`);
-  return r.sessions || [];
+// Paginated: page 0 returns all currently-active sessions + the first
+// `limit` non-active (sorted mtime desc). Subsequent pages return the
+// next slice of non-active sessions.
+// Returns { sessions, totalActive, totalNonActive, total, offset, limit, hasMore }.
+export async function listLocalCliSessions(cliType, { offset = 0, limit = 30 } = {}) {
+  const qs = `offset=${offset}&limit=${limit}`;
+  const r = await api('GET', `/api/cli-sessions/${cliType}?${qs}`);
+  return {
+    sessions: r.sessions || [],
+    totalActive: r.totalActive ?? 0,
+    totalNonActive: r.totalNonActive ?? 0,
+    total: r.total ?? (r.sessions?.length || 0),
+    offset: r.offset ?? offset,
+    limit: r.limit ?? limit,
+    hasMore: !!r.hasMore,
+  };
 }
 
 // Adopt an existing upstream CLI session into ccsm. Returns the created
