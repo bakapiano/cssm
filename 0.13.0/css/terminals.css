@@ -1,0 +1,294 @@
+/* Terminals tab · left rail (active sessions) + right pane (xterm host) */
+
+.terminals-layout {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: var(--s-4);
+  /* viewport minus page header + footer + padding; lets xterm fill height */
+  height: calc(100vh - 220px);
+  min-height: 480px;
+}
+
+.terminals-rail {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: var(--s-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+}
+.terminals-rail-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--s-2) var(--s-3);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
+  border-bottom: 1px solid var(--border-soft);
+  margin-bottom: var(--s-2);
+}
+
+/* button row showing one terminal in the rail */
+.terminal-row {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: 10px 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-mid);
+  font-family: var(--body);
+  font-size: 13px;
+  transition: background .12s ease, color .12s ease;
+}
+.terminal-row:hover { background: var(--bg); color: var(--ink); }
+.terminal-row.is-active {
+  background: var(--sidebar-active);
+  color: var(--ink);
+}
+.terminal-row-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  font-weight: 500;
+}
+.terminal-row-meta {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+.terminal-row-actions { display: inline-flex; }
+.terminal-row .action.tiny.danger {
+  padding: 1px 7px;
+  font-size: 11px;
+  min-width: 0;
+}
+
+/* right pane — full-height xterm host */
+.terminals-main {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: var(--s-3);
+  overflow: hidden;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.terminal-host {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  /* IME composition (Chinese/Japanese pinyin) lives in absolutely-positioned
+     .xterm-helper-textarea + .composition-view that grow with the composed
+     string. Near the right edge they overflow the viewport and trigger a
+     horizontal scrollbar that visually "pushes" the layout. Clip here so
+     the overflow is silently absorbed instead of expanding the page.
+     Do NOT touch the textarea/composition-view's own text properties —
+     xterm relies on their single-line behaviour to keep IME events firing
+     correctly (forcing pre-wrap / break-all eats compositionupdate events
+     in Chromium and Chinese input stops working entirely). */
+  overflow: hidden;
+  contain: layout;
+}
+/* While the user is composing (IME), pin the helper textarea to the right
+   edge of the terminal so it grows leftward instead of pushing the layout
+   rightward. Only touches positioning — NOT width / wrap / max-width, which
+   would break Chromium's compositionupdate event flow and stop Chinese
+   input from working. The class is toggled by TerminalView.js. */
+.terminal-host.is-composing .xterm-helper-textarea {
+  left: auto !important;
+  right: 0 !important;
+  text-align: right;
+  /* xterm un-hides the textarea during composition so the user can see the
+     composed string inline. We've moved it to the right edge to stop it
+     pushing layout — but that means the composed pinyin would now visibly
+     appear on the right. Hide its glyphs (caret + text) so the user only
+     sees the OS-native IME candidate popup, which floats independently
+     and is unaffected. */
+  color: transparent !important;
+  caret-color: transparent !important;
+  background: transparent !important;
+  text-shadow: none !important;
+}
+/* xterm also overlays a .composition-view (a small box at the cursor with
+   the in-progress string + a gold caret using THEME.cursor). We can't
+   display:none it — Chromium needs it in the layout tree to keep the IME
+   compositionupdate events flowing — but we can make it visually invisible
+   while leaving it laid out. */
+.terminal-host .composition-view {
+  opacity: 0 !important;
+  color: transparent !important;
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  pointer-events: none;
+}
+/* Don't override xterm's background — its renderer (canvas/WebGL) assumes
+   an opaque surface and ghosts on scroll if we force transparent. The
+   theme object in TerminalView.js already paints #faf9f5 to match the
+   surrounding card. */
+.terminal-host .xterm-viewport {
+  scrollbar-width: thin;
+}
+
+.terminal-empty {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: var(--ink-muted);
+}
+
+.terminal-empty-page { width: 100%; }
+
+/* === v1.0 session pane === */
+
+.sessions-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  /* Decorative faint hairline grid, only in this empty state — adds
+     editorial atmosphere without affecting any real content view. */
+  background-image:
+    linear-gradient(to right, rgba(216, 212, 198, 0.5) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(216, 212, 198, 0.5) 1px, transparent 1px);
+  background-size: 56px 56px;
+  background-position: center;
+  position: relative;
+}
+.sessions-empty::before,
+.sessions-empty::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.sessions-empty::before {
+  background: radial-gradient(ellipse at center, transparent 0%, var(--bg) 75%);
+}
+.sessions-empty-card {
+  text-align: center;
+  padding: var(--s-12) var(--s-10);
+  background: var(--bg-elev);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  max-width: 440px;
+  position: relative;
+  z-index: 1;
+  box-shadow: var(--shadow-lg);
+}
+.sessions-empty-card::before {
+  content: "·  EMPTY  ·";
+  display: block;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  color: var(--ink-faint);
+  margin-bottom: var(--s-4);
+}
+.sessions-empty-card h2 {
+  margin: 0 0 var(--s-3);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+  color: var(--ink);
+}
+.sessions-empty-card p {
+  margin: 0 0 var(--s-5);
+  color: var(--ink-mid);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.session-pane {
+  display: flex;
+  flex-direction: column;
+  /* Fill the entire content area edge-to-edge — negative horizontal margin
+     cancels .main's horizontal padding so the terminal touches the window
+     edges (and the sidebar border) with no surrounding chrome. */
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  margin: 0 calc(-1 * var(--s-4));
+  /* Cancel the tab-panel gap above so the terminal sits flush under the
+     title bar with no white band. */
+  margin-top: calc(-1 * var(--s-4));
+  background: var(--bg-elev);
+  overflow: hidden;
+}
+.session-pane-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  flex-wrap: wrap;
+}
+.session-pane-title {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.session-pane-title h2 {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 600;
+}
+.session-pane-meta {
+  display: flex;
+  gap: var(--s-3);
+  align-items: center;
+  font-size: 11.5px;
+  flex: 1;
+  overflow: hidden;
+}
+.session-pane-meta .mono {
+  font-family: var(--mono);
+  color: var(--ink-mid);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 50%;
+}
+.session-pane-meta .muted {
+  color: var(--ink-muted);
+}
+.session-pane-actions {
+  display: flex;
+  gap: var(--s-2);
+  flex-shrink: 0;
+}
+.session-pane-body {
+  flex: 1;
+  min-height: 0;
+  background: #1a1815;
+}
+.session-pane-body .terminal-host {
+  height: 100%;
+}
+.session-pane-body .terminal-empty {
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-3);
+  height: 100%;
+}
