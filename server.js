@@ -221,7 +221,10 @@ function spawnCliSession({ cli, cwd, sessionId, meta, extraArgs = [] }) {
     cwd,
     env,
     meta: { ...meta, cliId: cli.id, cliName: cli.name },
-    onData: () => { persistedSessions.touch(sessionId).catch(() => {}); },
+    onData: () => {
+      persistedSessions.touch(sessionId).catch(() => {});
+      try { require('./lib/cliActivity').noteOutput(sessionId); } catch {}
+    },
     onExit: ({ exitCode }) => {
       persistedSessions.markExited(sessionId, exitCode).catch(() => {});
     },
