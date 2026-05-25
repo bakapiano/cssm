@@ -65,8 +65,16 @@ function UpgradeCard() {
     if (!info?.updateAvailable) return;
     setUpgrading(true);
     try {
-      await api('POST', '/api/upgrade', { target: 'latest' });
+      const r = await api('POST', '/api/upgrade', { target: 'latest' });
       setToast(`upgrading to v${info.latest} · backend will restart`);
+      if (r?.closeFrontend) {
+        // Backend will respawn with a fresh browser window — close this
+        // one so the user isn't stuck on the OfflineBanner during the
+        // upgrade window. window.close() only works when the window was
+        // script-opened (Edge --app=, our spawned browser); regular tabs
+        // ignore it silently, which is fine (OfflineBanner takes over).
+        setTimeout(() => { try { window.close(); } catch {} }, 400);
+      }
     } catch (e) {
       setUpgrading(false);
       setToast(e.message, 'error');

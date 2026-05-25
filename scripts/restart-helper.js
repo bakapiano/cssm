@@ -62,7 +62,12 @@ function pidAlive(pid) {
 
   const isWin = process.platform === 'win32';
   const ccsmCmd = isWin ? 'ccsm.cmd' : 'ccsm';
-  const childEnv = { ...process.env, CCSM_NO_BROWSER: '1' };
+  // Inherit env but DROP CCSM_NO_BROWSER so the respawned server pops a
+  // fresh browser window — the frontend that triggered the restart
+  // called window.close() in parallel, and the new window takes its
+  // place without the OfflineBanner gap.
+  const childEnv = { ...process.env };
+  delete childEnv.CCSM_NO_BROWSER;
   let exe, exeArgs;
   if (isWin) {
     exe = process.env.ComSpec || 'cmd.exe';

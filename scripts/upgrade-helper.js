@@ -126,7 +126,12 @@ function pidAlive(pid) {
   const ccsmCmd = installPrefix
     ? (isWin ? path.join(installPrefix, 'ccsm.cmd') : path.join(installPrefix, 'bin', 'ccsm'))
     : (isWin ? 'ccsm.cmd' : 'ccsm');
-  const childEnv = { ...process.env, CCSM_NO_BROWSER: '1' };
+  // Drop CCSM_NO_BROWSER so the post-upgrade server pops a fresh window
+  // — the frontend that triggered the upgrade window.close()'d in
+  // parallel, and the new window takes its place. Skips the
+  // OfflineBanner gap that used to bridge the upgrade.
+  const childEnv = { ...process.env };
+  delete childEnv.CCSM_NO_BROWSER;
   let exe, exeArgs;
   if (isWin) {
     exe = process.env.ComSpec || 'cmd.exe';

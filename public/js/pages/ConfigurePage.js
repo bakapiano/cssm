@@ -431,8 +431,16 @@ function RestartButton() {
     if (!ok) return;
     setBusy(true);
     try {
-      await restartBackend();
+      const r = await restartBackend();
       setToast('restarting backend…');
+      if (r?.closeFrontend) {
+        // Backend respawn will pop a fresh browser window — close this
+        // one so the user isn't stuck on the OfflineBanner during the
+        // ~3s downtime. window.close() only fires in script-opened
+        // windows (Edge --app=); regular tabs ignore it and stay open,
+        // which is the right behavior for them.
+        setTimeout(() => { try { window.close(); } catch {} }, 400);
+      }
     } catch (e) {
       setBusy(false);
       setToast(e.message, 'error');

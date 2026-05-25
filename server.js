@@ -926,7 +926,7 @@ app.post('/api/restart', asyncH(async (_req, res) => {
   restartInFlight = true;
 
   if (process.env.CCSM_DEV === '1') {
-    res.json({ ok: true, started: true, mode: 'dev' });
+    res.json({ ok: true, started: true, mode: 'dev', closeFrontend: false });
     setImmediate(() => gracefulShutdown('restart (dev)'));
     return;
   }
@@ -941,7 +941,11 @@ app.post('/api/restart', asyncH(async (_req, res) => {
     return res.status(500).json({ error: `helper copy failed: ${e.message}` });
   }
   const args = [helperTmp, String(currentPort), String(process.pid)];
-  res.json({ ok: true, started: true, helper: helperTmp });
+  // closeFrontend asks the calling tab to window.close() itself — the
+  // helper will respawn ccsm WITHOUT CCSM_NO_BROWSER, so a fresh window
+  // pops up once the new backend is listening. Net effect: the user
+  // never sees the OfflineBanner during a restart.
+  res.json({ ok: true, started: true, helper: helperTmp, closeFrontend: true });
 
   setImmediate(() => {
     const { spawn } = require('node:child_process');
@@ -1081,7 +1085,7 @@ app.post('/api/upgrade', asyncH(async (req, res) => {
   }
   const args = [helperTmp, target, String(currentPort), String(process.pid), installPrefix, respawn];
 
-  res.json({ ok: true, started: true, target, helper: helperTmp });
+  res.json({ ok: true, started: true, target, helper: helperTmp, closeFrontend: true });
 
   // Flush response, then spawn helper detached and gracefulShutdown so
   // the helper's npm install isn't fighting our open file handles.
