@@ -29,17 +29,34 @@ if (process.platform !== 'win32') {
 // always means a first-time `npx @bakapiano/ccsm` gets the full "click
 // to wake" UX without needing a separate `npm i -g`.
 
+// Returns { ccsmCmd, isSandbox } where isSandbox=true means this install
+// went into a non-default prefix (e.g. `npm i -g --prefix=<tmp>` from
+// the in-app upgrade's test mode). For sandboxed installs we DO NOT
+// touch the global launcher.vbs / ccsm:// protocol registration —
+// otherwise we'd repoint them at a directory that gets deleted later.
 function findCcsmCmd() {
-  const prefix = process.env.npm_config_prefix
-    || (() => {
-      try {
-        const r = spawnSync('npm', ['config', 'get', 'prefix'], { encoding: 'utf8', shell: true });
-        return r.stdout?.trim() || null;
-      } catch { return null; }
-    })();
-  if (!prefix) return null;
+  const givenPrefix = process.env.npm_config_prefix || null;
+  let defaultPrefix = null;
+  try {
+    // npm config get prefix when run WITHOUT --prefix returns the
+    // user's default global prefix; with --prefix it echoes the flag.
+    // We want the env-independent default so we can compare. INIT_CWD
+    // and a clean spawn give us the user-default value.
+    const r = spawnSync('npm', ['config', 'get', 'prefix'], {
+      encoding: 'utf8', shell: true,
+      env: { ...process.env, npm_config_prefix: '' },
+    });
+    defaultPrefix = r.stdout?.trim() || null;
+  } catch {}
+  const prefix = givenPrefix || defaultPrefix;
+  if (!prefix) return { ccsmCmd: null, isSandbox: false };
   const candidate = path.join(prefix, 'ccsm.cmd');
-  return fs.existsSync(candidate) ? candidate : null;
+  const isSandbox = !!(givenPrefix && defaultPrefix
+    && path.resolve(givenPrefix).toLowerCase() !== path.resolve(defaultPrefix).toLowerCase());
+  return {
+    ccsmCmd: fs.existsSync(candidate) ? candidate : null,
+    isSandbox,
+  };
 }
 
 // Write a tiny VBScript wrapper that ccsm:// dispatches into. Why VBS:
@@ -91,11 +108,15 @@ function registerProtocol(vbsPath) {
   }
 }
 
-const ccsmCmd = (() => {
-  try { return findCcsmCmd(); } catch { return null; }
+const { ccsmCmd, isSandbox } = (() => {
+  try { return findCcsmCmd(); } catch { return { ccsmCmd: null, isSandbox: false }; }
 })();
 if (!ccsmCmd) {
   warn('could not locate ccsm.cmd · skipping protocol registration');
+  process.exit(0);
+}
+if (isSandbox) {
+  log(`sandbox install detected (prefix=${process.env.npm_config_prefix}) · skipping global launcher.vbs + protocol registration + auto-launch`);
   process.exit(0);
 }
 

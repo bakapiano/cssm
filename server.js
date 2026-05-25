@@ -2,6 +2,7 @@
 'use strict';
 
 const path = require('node:path');
+const os = require('node:os');
 const express = require('express');
 
 const { loadConfig, saveConfig, DATA_DIR } = require('./lib/config');
@@ -267,16 +268,24 @@ async function maybeWatchCliSessionId({ cli, cwd, ccsmSessionId }) {
   // If a previous watcher was still alive on this id (e.g. fast restart),
   // tear it down first.
   stopWatcher(ccsmSessionId);
+  let excludeIds = [];
   try {
-    const existing = await persistedSessions.get(ccsmSessionId);
+    const all = await persistedSessions.loadAll();
+    const existing = all.find((s) => s.id === ccsmSessionId);
     if (existing?.cliSessionId) {
       console.log(`[cliSessionId] skip watcher · ${cli.type} session already known (${existing.cliSessionId})`);
       return;
     }
+    // Other ccsm sessions' upstream UUIDs — exclude so the watcher
+    // doesn't misclaim a sibling's actively-touched transcript.
+    excludeIds = all
+      .filter((s) => s.id !== ccsmSessionId && s.cliSessionId)
+      .map((s) => s.cliSessionId);
   } catch {}
   const cleanup = cliSessionWatcher.captureSessionId({
     cliType: cli.type,
     cwd,
+    excludeIds,
     onCapture: (cliSessionId) => {
       activeWatchers.delete(ccsmSessionId);
       persistedSessions.update(ccsmSessionId, { cliSessionId }).catch((e) => {
@@ -852,6 +861,14 @@ app.post('/api/sessions/:id/resume', asyncH(async (req, res) => {
   // Already running and attached → no-op, just return its id.
   const live = webTerminal.get(record.id);
   if (live && !live.exitedAt) {
+    // Pool says we're alive but the record may be stale (e.g. a prior
+    // markRunning got clobbered by an OLD entry's onExit before the
+    // respawn-guard landed, or boot mark-exited ran after a pool entry
+    // was already wired). Reconcile the file to match the pool so the
+    // frontend doesn't get stuck on "Resuming session…" forever.
+    if (record.status !== 'running' || record.pid !== live.meta.pid) {
+      try { await persistedSessions.markRunning(record.id, live.meta.pid); } catch {}
+    }
     return res.json({ launched: { id: record.id, pid: live.meta.pid, cliId: record.cliId } });
   }
   const cfg = await loadConfig();
@@ -1007,55 +1024,60 @@ app.post('/api/upgrade', asyncH(async (req, res) => {
   if (upgradeInFlight) {
     return res.status(409).json({ error: 'upgrade already in progress' });
   }
-  upgradeInFlight = true;
-  const target = String((req.body && req.body.target) || 'latest');
+  const body = req.body || {};
+  const target = String(body.target || 'latest');
   // Refuse anything that doesn't look like a semver dist-tag or version
   // — defends against `;` etc. winding up in the spawn argv even though
   // we don't shell out.
   if (!/^[a-z0-9.+\-^~]+$/i.test(target)) {
-    upgradeInFlight = false;
     return res.status(400).json({ error: `invalid target: ${target}` });
   }
-  console.log(`[upgrade] starting npm i -g @bakapiano/ccsm@${target}`);
-  res.json({ ok: true, started: true, target });
+  // Optional sandbox install prefix (for testing without disturbing the
+  // user's real global ccsm). Validated as a plain absolute path so it
+  // can't be a flag injection.
+  const installPrefix = body.installPrefix ? String(body.installPrefix) : '';
+  if (installPrefix && (installPrefix.startsWith('-') || !path.isAbsolute(installPrefix))) {
+    return res.status(400).json({ error: 'installPrefix must be an absolute path' });
+  }
+  const respawn = body.respawn === false ? '0' : '1';
+  upgradeInFlight = true;
+  console.log(`[upgrade] target=${target}${installPrefix ? ` prefix=${installPrefix}` : ''}${respawn === '0' ? ' (no respawn)' : ''}`);
 
-  // Defer the actual spawn so the HTTP response flushes first.
+  // The helper runs OUTSIDE the package dir so npm can rename it
+  // without fighting open file handles. Copy the script to os.tmpdir()
+  // and spawn from there.
+  const fsp = require('node:fs/promises');
+  const helperSrc = path.join(__dirname, 'scripts', 'upgrade-helper.js');
+  const helperTmp = path.join(os.tmpdir(), `ccsm-upgrade-${process.pid}-${Date.now()}.js`);
+  try {
+    await fsp.copyFile(helperSrc, helperTmp);
+  } catch (e) {
+    upgradeInFlight = false;
+    return res.status(500).json({ error: `helper copy failed: ${e.message}` });
+  }
+  const args = [helperTmp, target, String(currentPort), String(process.pid), installPrefix, respawn];
+
+  res.json({ ok: true, started: true, target, helper: helperTmp });
+
+  // Flush response, then spawn helper detached and gracefulShutdown so
+  // the helper's npm install isn't fighting our open file handles.
   setImmediate(() => {
     const { spawn } = require('node:child_process');
-    const npmExe = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-    const args = ['i', '-g', `@bakapiano/ccsm@${target}`];
-    const child = spawn(npmExe, args, {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
-      shell: false,
-    });
-    child.on('error', (e) => {
-      console.error('[upgrade] npm spawn failed:', e.message);
+    try {
+      const child = spawn(process.execPath, args, {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+        shell: false,
+      });
+      child.unref();
+      console.log(`[upgrade] helper pid=${child.pid}, shutting down`);
+    } catch (e) {
+      console.error('[upgrade] helper spawn failed:', e.message);
       upgradeInFlight = false;
-    });
-    child.on('exit', (code) => {
-      console.log(`[upgrade] npm exit ${code}`);
-      upgradeInFlight = false;
-      if (code !== 0) return;
-      // Install succeeded → spawn a fresh ccsm and shut down. The
-      // launcher already detaches on its own.
-      try {
-        const ccsmCmd = process.platform === 'win32' ? 'ccsm.cmd' : 'ccsm';
-        const respawn = spawn(ccsmCmd, [], {
-          detached: true,
-          stdio: 'ignore',
-          windowsHide: true,
-          shell: false,
-          env: { ...process.env, CCSM_NO_BROWSER: '1' },
-        });
-        respawn.unref();
-      } catch (e) {
-        console.error('[upgrade] respawn failed:', e.message);
-      }
-      setTimeout(() => gracefulShutdown('upgrade'), 1500);
-    });
-    child.unref();
+      return;
+    }
+    setTimeout(() => gracefulShutdown('upgrade'), 500);
   });
 }));
 
