@@ -12,5 +12,12 @@
   "theme_color": "#ffffff",
   "icons": [
     { "src": "favicon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "any" }
+  ],
+  "prefer_related_applications": false,
+  "related_applications": [
+    {
+      "platform": "webapp",
+      "url": "https://bakapiano.github.io/ccsm/manifest.webmanifest"
+    }
   ]
 }

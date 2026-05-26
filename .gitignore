@@ -8,3 +8,9 @@ data/ui-*.png
 *.log
 .playwright-cli/
 ccsm-workspaces/
+
+# Dev-only mirrors from pages-root/ — scripts/dev.js maintains them
+# at startup. Real source lives in pages-root/.
+public/setup/
+public/manifest.webmanifest
+public/favicon-root.svg

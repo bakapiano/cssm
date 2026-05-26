@@ -20,6 +20,7 @@ import { html } from '../html.js';
 import { useEffect } from 'preact/hooks';
 import { serverHealth, hasBootedOnline } from '../state.js';
 import { pollHealth, refreshAll } from '../api.js';
+import { BrandMark } from '../icons.js';
 
 const THRESHOLD = 3;     // failures before we switch from "checking" to "not running"
 const FAST_POLL_MS = 1500;
@@ -28,11 +29,6 @@ export function HealthOverlay() {
   const h = serverHealth.value;
   const offline = h.state === 'offline';
   const count = h.failureCount || 0;
-
-  // Don't render the overlay during the very first connect attempt
-  // (before we've ever been online) — main.js shows nothing prominent
-  // there anyway, and the modal flashing on every page load is
-  // annoying. Only show after we've seen the backend at least once.
   const everSeen = hasBootedOnline.value;
 
   useEffect(() => {
@@ -41,9 +37,6 @@ export function HealthOverlay() {
     return () => clearInterval(id);
   }, [offline]);
 
-  // When the backend comes back online after we've shown the overlay,
-  // refresh all derived state once — sessions/folders/workspaces may
-  // have changed during the outage (post-restart, post-upgrade).
   useEffect(() => {
     if (!offline && everSeen) {
       refreshAll().catch(() => {});
@@ -54,27 +47,44 @@ export function HealthOverlay() {
 
   const showStart = count >= THRESHOLD;
 
+  // Reuses the .offline-overlay / .offline-card classes so the card
+  // layout (brand mark, big title, copy, primary action button,
+  // collapsible npm-install fallback) matches what the OfflineBanner
+  // used to render. HealthOverlay differs only in the two states:
+  // early polls show a spinner + "Checking…" instead of the static
+  // "Backend not running" card.
   return html`
-    <div class="health-overlay" role="dialog" aria-modal="true" aria-live="polite">
-      <div class="health-card">
+    <div class="offline-overlay" role="dialog" aria-modal="true" aria-live="polite">
+      <div class="offline-card">
+        <div class="offline-brand">${
+          showStart
+            ? html`<${BrandMark} />`
+            : html`<div class="health-spinner" aria-hidden="true"></div>`
+        }</div>
         ${!showStart ? html`
-          <div class="health-spinner" aria-hidden="true"></div>
-          <div class="health-title">Checking backend health…</div>
-          <div class="health-meta">
-            ${count === 0 ? 'Connecting…' : `${count} attempt${count > 1 ? 's' : ''}`}
-          </div>
+          <h1 class="offline-title">Checking backend health…</h1>
+          <p class="offline-copy">
+            ${count === 0 ? 'Probing localhost:7777.' : `${count} attempt${count > 1 ? 's' : ''}. Hang tight.`}
+          </p>
         ` : html`
-          <div class="health-dot" aria-hidden="true"></div>
-          <div class="health-title">Backend not running</div>
-          <div class="health-meta">
-            ${count} failed pings. Wake the backend manually below — we won't auto-restart.
+          <h1 class="offline-title">Backend not running</h1>
+          <p class="offline-copy">
+            ccsm's local backend isn't reachable. Wake it manually below — we won't
+            auto-restart. Windows may ask once for permission; tick <em>Always allow</em>
+            to silence future prompts.
+          </p>
+          <div class="offline-actions">
+            <a class="action primary big" href="ccsm://start">Start backend</a>
           </div>
-          <a class="action primary health-start" href="ccsm://start">
-            Start backend
-          </a>
-          <div class="health-hint">
-            Or run <code>ccsm</code> in a terminal.
-          </div>
+          <details class="offline-fallback">
+            <summary>Don't have ccsm installed?</summary>
+            <div class="offline-fallback-body">
+              <p>Install once via npm, then come back here:</p>
+              <pre><code>npm i -g @bakapiano/ccsm</code></pre>
+              <p>Or run a one-shot trial without installing:</p>
+              <pre><code>npx @bakapiano/ccsm</code></pre>
+            </div>
+          </details>
         `}
       </div>
     </div>`;

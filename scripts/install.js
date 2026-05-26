@@ -130,29 +130,24 @@ try {
   warn('the hosted frontend\'s "Start ccsm" button will not be able to launch the backend. You can still run `ccsm` manually in a terminal.');
 }
 
-// Auto-launch ccsm after install so the user lands directly in the app
-// without needing a second command. Detached + windowsHide so the npm
-// install command returns immediately. Skip if CCSM_NO_AUTOLAUNCH=1 is
-// set (CI, headless setups).
+// Open the hosted setup guide. The page walks the user through the
+// remaining one-time setup (allow ccsm:// protocol, firewall, install
+// as PWA) and Step 1's "Try ccsm://start" button doubles as ccsm
+// auto-launch — so we don't need a separate spawn here. Set
+// CCSM_NO_AUTOLAUNCH=1 to skip (CI, headless setups).
 if (process.env.CCSM_NO_AUTOLAUNCH !== '1') {
   try {
-    const { spawn } = require('node:child_process');
-    // Spawn `node bin/ccsm.js` directly — NOT ccsm.cmd. On Windows,
-    // child_process.spawn() with shell:false refuses .cmd files (throws
-    // EINVAL); using shell:true would flash a console window. Going
-    // through node + the JS entrypoint sidesteps both problems and
-    // matches exactly what the .cmd shim would have invoked.
-    const launcherJs = path.join(__dirname, '..', 'bin', 'ccsm.js');
-    const child = spawn(process.execPath, [launcherJs], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
-    });
-    child.unref();
-    log('launching ccsm now · check for the chromeless window');
+    // `start` on Windows opens the default browser without attaching a
+    // console. Run via cmd.exe /c since `start` is a cmd builtin.
+    require('node:child_process').spawn(
+      'cmd.exe',
+      ['/d', '/s', '/c', 'start', '', 'https://bakapiano.github.io/ccsm/setup/'],
+      { detached: true, stdio: 'ignore', windowsHide: true }
+    ).unref();
+    log('opened setup guide · https://bakapiano.github.io/ccsm/setup/');
     log('(set CCSM_NO_AUTOLAUNCH=1 to skip this on future installs)');
   } catch (e) {
-    warn(`auto-launch failed · ${e.message}`);
+    warn(`setup guide open failed · ${e.message}`);
     warn('run `ccsm` manually to start.');
   }
 }

@@ -3,7 +3,6 @@ import { activeTab } from '../state.js';
 import { Sidebar } from './Sidebar.js';
 import { Toast } from './Toast.js';
 import { DialogHost } from './DialogHost.js';
-import { OfflineBanner } from './OfflineBanner.js';
 import { HealthOverlay } from './HealthOverlay.js';
 import { SessionsPage } from '../pages/SessionsPage.js';
 import { LaunchPage } from '../pages/LaunchPage.js';
@@ -29,7 +28,6 @@ export function App() {
           ${tab === 'about'     ? html`<${Panel} name="about"><${AboutPage}     /></${Panel}>` : null}
         </div>
       </main>
-      <${OfflineBanner} />
       <${Toast} />
       <${DialogHost} />
       <${HealthOverlay} />

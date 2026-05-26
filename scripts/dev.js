@@ -38,6 +38,52 @@ if (!fs.existsSync(configPath)) {
   }, null, 2));
 }
 
+// Mirror pages-root assets into public/ so the dev server can serve
+// them at the URL paths the deployed site uses (manifest at
+// /manifest.webmanifest, setup page at /setup/). Both mirror files
+// are .gitignored — they exist only for local preview.
+//
+// The manifest is rewritten with a "ccsm-dev" identity so the PWA
+// installed from dev shows up separately in Chrome's installed-apps
+// list and Start Menu, instead of conflicting with the prod CCSM
+// install.
+const REPO_ROOT = path.join(__dirname, '..');
+const PAGES_ROOT = path.join(REPO_ROOT, 'pages-root');
+const PUBLIC_DIR = path.join(REPO_ROOT, 'public');
+
+function mirrorSetup() {
+  try {
+    const src = path.join(PAGES_ROOT, 'setup');
+    const dst = path.join(PUBLIC_DIR, 'setup');
+    fs.mkdirSync(dst, { recursive: true });
+    for (const f of fs.readdirSync(src)) {
+      fs.copyFileSync(path.join(src, f), path.join(dst, f));
+    }
+  } catch (e) { console.warn('[dev] setup mirror failed:', e.message); }
+}
+function writeDevManifest() {
+  try {
+    const src = path.join(PAGES_ROOT, 'manifest.webmanifest');
+    const m = JSON.parse(fs.readFileSync(src, 'utf8'));
+    m.id = '/?ccsm-dev';
+    m.name = 'CCSM dev';
+    m.short_name = 'CCSM dev';
+    // Dev runs at host root (localhost:7788/), so scope + start_url
+    // anchor at `/` not `./` (which would resolve relative to the
+    // manifest URL — same result here, but explicit is clearer).
+    m.scope = '/';
+    m.start_url = '/';
+    // Drop related_applications self-reference — its URL points at
+    // the prod GH Pages manifest, not this dev one. Leaving it in
+    // would let prod's getInstalledRelatedApps() detect dev installs
+    // as if they were prod, which is the opposite of what we want.
+    delete m.related_applications;
+    fs.writeFileSync(path.join(PUBLIC_DIR, 'manifest.webmanifest'), JSON.stringify(m, null, 2));
+  } catch (e) { console.warn('[dev] manifest mirror failed:', e.message); }
+}
+mirrorSetup();
+writeDevManifest();
+
 const env = {
   ...process.env,
   CCSM_HOME: DEV_HOME,
