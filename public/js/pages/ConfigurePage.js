@@ -5,7 +5,7 @@
 import { html } from '../html.js';
 import { useEffect, useState } from 'preact/hooks';
 import {
-  config, configDirty, accentColor, folders, workspaces,
+  config, configDirty, accentColor, folders, workspaces, serverHealth,
   setAccentColor, ACCENT_DEFAULT,
 } from '../state.js';
 import {
@@ -168,6 +168,10 @@ export function ConfigurePage() {
         <div class="field">
           <span class="label">Theme accent</span>
           <${AccentPicker} />
+        </div>
+        <div class="field">
+          <span class="label">Version</span>
+          <${VersionField} />
         </div>
         <div class="field">
           <span class="label">Backend</span>
@@ -449,6 +453,67 @@ const PRESETS = [
   { name: 'Slate',         hex: '#4a5563' },
   { name: 'Crimson',       hex: '#b73f3f' },
 ];
+
+function VersionField() {
+  const [info, setInfo] = useState(null);
+  const [checking, setChecking] = useState(true);
+  const [upgrading, setUpgrading] = useState(false);
+
+  const refresh = async (force = false) => {
+    setChecking(true);
+    try {
+      const r = await api('GET', '/api/version' + (force ? '?refresh=1' : ''));
+      setInfo(r);
+    } catch (e) {
+      setInfo({ error: e.message });
+    } finally {
+      setChecking(false);
+    }
+  };
+  useEffect(() => { refresh(false); }, []);
+
+  const onUpgrade = async () => {
+    if (!info?.updateAvailable) return;
+    setUpgrading(true);
+    try {
+      const r = await api('POST', '/api/upgrade', { target: 'latest' });
+      setToast(`upgrading to v${info.latest} · backend will restart`);
+      if (r?.helperUrl) {
+        setTimeout(() => { location.href = r.helperUrl; }, 300);
+      } else if (r?.closeFrontend) {
+        setTimeout(() => { try { window.close(); } catch {} }, 400);
+      }
+    } catch (e) {
+      setUpgrading(false);
+      setToast(e.message, 'error');
+    }
+  };
+
+  const current = info?.current || serverHealth.value.version || '';
+  const latest  = info?.latest;
+  const updateAvailable = !!info?.updateAvailable;
+
+  const hint = info?.error
+    ? "Couldn't reach npm registry."
+    : updateAvailable ? `Update available · v${latest}`
+    : latest ? "You're on the latest release."
+    : 'Checks npm registry (cached 30 min).';
+
+  return html`
+    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+      <span class="mono">v${current || '?'}</span>
+      ${updateAvailable ? html`
+        <button class="action primary" disabled=${upgrading} onClick=${onUpgrade}>
+          ${upgrading ? 'Upgrading…' : `Upgrade to v${latest}`}
+        </button>
+      ` : null}
+      <button class="action" disabled=${checking || upgrading} onClick=${() => refresh(true)}>
+        ${checking ? 'Checking…' : 'Check for updates'}
+      </button>
+      <span class="hint">${hint}</span>
+    </div>
+  `;
+}
 
 function RestartButton() {
   const [busy, setBusy] = useState(false);
