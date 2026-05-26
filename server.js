@@ -1145,18 +1145,108 @@ function findAppModeBrowser() {
   return null;
 }
 
-// Auto-open the frontend in a browser when ccsm boots. Strategy: try a
-// chromeless app window first (Edge/Chrome --app=); if neither is
-// installed, fall back to the OS default browser as a regular tab. On
-// non-Windows we skip — the bundled launcher isn't ported yet.
+// Look for a Chrome/Edge PWA that the user already installed locally
+// pointing at the ccsm frontend. When found, we launch it via
+// `chrome.exe --profile-directory=... --app-id=<id>` — same as the
+// shortcut Start Menu creates at install time. That path opens the
+// PWA fully chromeless (respects manifest display:standalone + WCO).
+// Without this we'd fall back to `--app=<URL> --user-data-dir=<ours>`
+// which uses an isolated profile that doesn't see the install, so
+// Chrome shows a minimal-ui address bar.
+function findInstalledCcsmPwa() {
+  if (process.platform !== 'win32') return null;
+  const appData = process.env.APPDATA;
+  if (!appData) return null;
+  const fs = require('node:fs');
+  const startMenu = path.join(appData, 'Microsoft', 'Windows', 'Start Menu', 'Programs');
+  const dirs = [
+    path.join(startMenu, 'Chrome Apps'),
+    path.join(startMenu, 'Edge Apps'),
+  ];
+  const candidates = [];
+  for (const dir of dirs) {
+    let names;
+    try { names = fs.readdirSync(dir); } catch { continue; }
+    for (const name of names) {
+      if (!name.toLowerCase().endsWith('.lnk')) continue;
+      // Filter by filename — Chrome names PWA shortcuts after the
+      // manifest's short_name/name. CCSM matches our manifest.
+      if (!/ccsm/i.test(name)) continue;
+      const full = path.join(dir, name);
+      try {
+        candidates.push({ name, path: full, mtime: fs.statSync(full).mtimeMs });
+      } catch {}
+    }
+  }
+  if (candidates.length === 0) return null;
+  // Newest install wins (covers the case where the user re-installed
+  // and accumulated CCSM, CCSM (1), etc.).
+  candidates.sort((a, b) => b.mtime - a.mtime);
+  // Resolve via WScript.Shell COM. Single PowerShell call enumerates
+  // every candidate; we stop at the first one whose target looks like
+  // a Chrome/Edge binary and whose args carry an --app-id.
+  const { spawnSync } = require('node:child_process');
+  const psPaths = candidates
+    .map((c) => `'${c.path.replace(/'/g, "''")}'`).join(',');
+  const script = `
+$ErrorActionPreference = 'SilentlyContinue'
+$wsh = New-Object -ComObject WScript.Shell
+foreach ($p in @(${psPaths})) {
+  $sc = $wsh.CreateShortcut($p)
+  Write-Output ($sc.TargetPath + '|' + $sc.Arguments)
+}`;
+  const r = spawnSync('powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-Command', script],
+    { encoding: 'utf8', windowsHide: true });
+  if (r.status !== 0 || !r.stdout) return null;
+  for (const line of r.stdout.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const sep = line.indexOf('|');
+    if (sep < 0) continue;
+    const target = line.slice(0, sep).trim();
+    const args = line.slice(sep + 1).trim();
+    if (!/chrome(_proxy)?\.exe$|msedge(_proxy)?\.exe$/i.test(target)) continue;
+    const appId = (args.match(/--app-id=(\S+)/) || [])[1];
+    if (!appId) continue;
+    const profile = (args.match(/--profile-directory=(\S+)/) || [])[1] || 'Default';
+    return { browserPath: target, appId, profile };
+  }
+  return null;
+}
+
+// Auto-open the frontend in a browser when ccsm boots. Strategy:
+//   1. If the user already installed the CCSM PWA, launch THAT (fully
+//      chromeless via --app-id, uses user's main browser profile).
+//   2. Otherwise try a generic --app= window in an isolated profile —
+//      this shows a thin minimal-ui address bar but at least it's
+//      a dedicated window.
+//   3. Fall back to the OS default browser as a regular tab.
+// On non-Windows we skip — the bundled launcher isn't ported yet.
 function openInBrowser(url) {
   if (process.platform !== 'win32') return { kind: 'none', child: null };
   const { spawn } = require('node:child_process');
   const fs = require('node:fs');
+
+  const installed = findInstalledCcsmPwa();
+  if (installed) {
+    console.log(`[ccsm] launching installed PWA · app-id=${installed.appId} profile=${installed.profile}`);
+    const child = spawn(
+      installed.browserPath,
+      [
+        `--profile-directory=${installed.profile}`,
+        `--app-id=${installed.appId}`,
+      ],
+      { detached: true, stdio: 'ignore' }
+    );
+    child.unref();
+    return { kind: 'pwa', child };
+  }
+
   const exe = findAppModeBrowser();
   if (exe) {
     const profileDir = path.join(DATA_DIR, 'browser-profile');
     fs.mkdirSync(profileDir, { recursive: true });
+    console.log(`[ccsm] no installed PWA found · falling back to --app= window`);
     const child = spawn(
       exe,
       [
