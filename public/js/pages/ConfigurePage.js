@@ -42,30 +42,51 @@ function cliFieldsFor({ creating } = {}) {
       { value: 'copilot', label: 'GitHub Copilot', icon: html`<${IconCopilotColor} />` },
       { value: 'other',   label: 'Other',          icon: html`<${IconTerminal} />` },
     ],
-      // When user picks a type while creating, prefill command + resumeArgs.
-      // For edit mode we don't override what the user already has.
-      onChange: creating ? (v, next) => {
+      // Type-change side effects. For known types we force the
+      // integration args (newSessionIdArgs / resumeIdArgs) to the
+      // canonical template — those fields are locked anyway so
+      // there's no value in leaving stale strings around. For
+      // type='other' we leave existing args alone so the user can
+      // keep editing them. Name + command are only prefilled when
+      // creating (don't clobber a saved CLI's name on edit).
+      onChange: (v, next) => {
         const d = CLI_TYPE_DEFAULTS[v];
         if (!d) return null;
-        const patch = { resumeIdArgs: d.resumeIdArgs, newSessionIdArgs: d.newSessionIdArgs };
-        if (!next.command || !next.command.trim()) patch.command = d.command || '';
-        if (!next.name || !next.name.trim()) {
-          patch.name = v === 'claude' ? 'Claude Code'
-                     : v === 'codex' ? 'OpenAI Codex'
-                     : v === 'copilot' ? 'GitHub Copilot'
-                     : '';
+        const patch = {};
+        if (v !== 'other') {
+          patch.resumeIdArgs = d.resumeIdArgs;
+          patch.newSessionIdArgs = d.newSessionIdArgs;
+        }
+        if (creating) {
+          if (!next.command || !next.command.trim()) patch.command = d.command || '';
+          if (!next.name || !next.name.trim()) {
+            patch.name = v === 'claude' ? 'Claude Code'
+                       : v === 'codex' ? 'OpenAI Codex'
+                       : v === 'copilot' ? 'GitHub Copilot'
+                       : '';
+          }
         }
         return patch;
-      } : undefined,
+      },
     },
     { key: 'name', label: 'Name', placeholder: 'My CLI', required: true },
     { key: 'command', label: 'Command', mono: true, placeholder: 'ccp / claude / ...', required: true },
     { key: 'args', label: 'Args (space-separated)', mono: true, placeholder: '',
       hint: 'Used on every launch.' },
     { key: 'newSessionIdArgs', label: 'New session id args', mono: true, placeholder: '--session-id <id>',
-      hint: 'ccsm pre-generates a UUID and substitutes it for <id> on first launch — the upstream CLI session id is known immediately.' },
+      // Lock for known types — those args are an integration contract
+      // with the upstream CLI, not a user knob. Only Type=Other allows
+      // a custom value (for hand-rolled CLIs ccsm doesn't ship a
+      // template for).
+      readOnly: (d) => d.type && d.type !== 'other',
+      hint: (d) => d.type && d.type !== 'other'
+        ? `Locked to the canonical flags for ${d.type}. Change Type to "Other" to override.`
+        : 'ccsm pre-generates a UUID and substitutes it for <id> on first launch — the upstream CLI session id is known immediately.' },
     { key: 'resumeIdArgs', label: 'Resume by id args', mono: true, placeholder: '--resume <id>',
-      hint: 'Used on every resume. Substitutes <id> with the captured session UUID.' },
+      readOnly: (d) => d.type && d.type !== 'other',
+      hint: (d) => d.type && d.type !== 'other'
+        ? `Locked to the canonical flags for ${d.type}. Change Type to "Other" to override.`
+        : 'Used on every resume. Substitutes <id> with the captured session UUID.' },
     { key: 'shell', label: 'Shell', type: 'select', default: 'direct', options: [
       { value: 'direct', label: 'direct (real .exe / .cmd)' },
       { value: 'pwsh',   label: 'pwsh (PowerShell aliases & functions)' },

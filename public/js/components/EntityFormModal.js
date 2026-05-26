@@ -26,7 +26,19 @@ export function EntityFormModal({
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
 
-  const isReadOnly = (key) => readOnlyKeys.includes(key);
+  // A field is read-only if its key is in the static `readOnlyKeys`
+  // prop OR its own `readOnly` predicate (called with the current
+  // draft) returns true. The predicate lets a field react to other
+  // fields' values — e.g. lock newSessionIdArgs once a known `type`
+  // is picked, since those args are an integration contract with the
+  // upstream CLI, not a user knob.
+  const isReadOnly = (field) => {
+    if (readOnlyKeys.includes(field.key)) return true;
+    if (typeof field.readOnly === 'function') {
+      try { return !!field.readOnly(draft); } catch { return false; }
+    }
+    return !!field.readOnly;
+  };
 
   const submit = async (ev) => {
     ev?.preventDefault?.();
@@ -61,7 +73,7 @@ export function EntityFormModal({
             <span class="entity-field-label">${f.label}</span>
             ${f.type === 'select' ? html`
               <select class="input" value=${draft[f.key] || ''}
-                      disabled=${isReadOnly(f.key)}
+                      disabled=${isReadOnly(f)}
                       onChange=${(e) => {
                         const next = { ...draft, [f.key]: e.target.value };
                         const sideEffects = f.onChange?.(e.target.value, next);
@@ -71,13 +83,13 @@ export function EntityFormModal({
                   <option value=${opt.value}>${opt.label}</option>`)}
               </select>
             ` : f.type === 'iconRadio' ? html`
-              <div class=${`icon-radio${isReadOnly(f.key) ? ' is-disabled' : ''}`}>
+              <div class=${`icon-radio${isReadOnly(f) ? ' is-disabled' : ''}`}>
                 ${(f.options || []).map((opt) => html`
                   <button type="button" key=${opt.value}
                           class=${`icon-radio-opt${draft[f.key] === opt.value ? ' is-active' : ''}`}
-                          disabled=${isReadOnly(f.key)}
+                          disabled=${isReadOnly(f)}
                           onClick=${() => {
-                            if (isReadOnly(f.key)) return;
+                            if (isReadOnly(f)) return;
                             const next = { ...draft, [f.key]: opt.value };
                             const sideEffects = f.onChange?.(opt.value, next);
                             setDraft(sideEffects ? { ...next, ...sideEffects } : next);
@@ -89,20 +101,20 @@ export function EntityFormModal({
             ` : f.type === 'checkbox' ? html`
               <span class="entity-checkbox-row">
                 <input type="checkbox" checked=${!!draft[f.key]}
-                       disabled=${isReadOnly(f.key)}
+                       disabled=${isReadOnly(f)}
                        onChange=${(e) => setDraft({ ...draft, [f.key]: e.target.checked })} />
-                ${f.hint ? html`<span class="entity-field-hint">${f.hint}</span>` : null}
+                ${f.hint ? html`<span class="entity-field-hint">${typeof f.hint === 'function' ? f.hint(draft) : f.hint}</span>` : null}
               </span>
             ` : html`
               <input type=${f.type || 'text'}
                      class=${`input${f.mono ? ' mono' : ''}`}
                      placeholder=${f.placeholder || ''}
                      value=${draft[f.key] || ''}
-                     readonly=${isReadOnly(f.key)}
+                     readonly=${isReadOnly(f)}
                      onInput=${(e) => setDraft({ ...draft, [f.key]: e.target.value })}
-                     autoFocus=${f.autoFocus && !isReadOnly(f.key)} />`}
+                     autoFocus=${f.autoFocus && !isReadOnly(f)} />`}
             ${f.hint && f.type !== 'checkbox' ? html`
-              <span class="entity-field-hint">${f.hint}</span>` : null}
+              <span class="entity-field-hint">${typeof f.hint === 'function' ? f.hint(draft) : f.hint}</span>` : null}
           </label>`)}
         ${testResult ? html`
           <div class=${`entity-test-result ${testResult.ok ? 'is-ok' : 'is-fail'}`}>
