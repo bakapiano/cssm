@@ -35,6 +35,7 @@ jobs:
       # sidesteps the `"os": ["win32"]` runtime gate which would reject
       # `npm install` on this Linux runner.
       - name: Publish
-        run: npm publish --provenance --access public
+        # provenance temporarily disabled while rekor.sigstore.dev is unhealthy
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
