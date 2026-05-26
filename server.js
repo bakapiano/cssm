@@ -1380,10 +1380,16 @@ function openInBrowser(url) {
   console.log(`clis:            ${cfg.clis.map((c) => c.id).join(', ')} (default: ${cfg.defaultCliId})`);
 
   // CCSM_NO_BROWSER=1 (set by the ccsm:// protocol launcher) suppresses
-  // the auto-open entirely. Otherwise try app-mode (chromeless Edge/Chrome
-  // window); if no such browser is installed, openInBrowser falls back to
-  // the OS default browser on its own.
-  const opened = process.env.CCSM_NO_BROWSER === '1'
+  // the auto-open entirely. CCSM_FROM_UPGRADE=1 (set by upgrade-helper
+  // when it respawns ccsm post-install) does the same: the user is
+  // already in the helper UI which redirects to this fresh backend, so
+  // a second app-mode window would just shadow the first. Otherwise try
+  // app-mode (chromeless Edge/Chrome window); if no such browser is
+  // installed, openInBrowser falls back to the OS default browser on
+  // its own.
+  const suppressBrowser = process.env.CCSM_NO_BROWSER === '1'
+                       || process.env.CCSM_FROM_UPGRADE === '1';
+  const opened = suppressBrowser
     ? { kind: 'none', child: null }
     : openInBrowser(FRONTEND_URL);
 
