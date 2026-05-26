@@ -537,6 +537,12 @@ httpServer.listen(HELPER_PORT, '127.0.0.1', () => {
   setPhase('installing');
   pushLine('info', `Running: npm i -g @bakapiano/ccsm@${target}${installPrefix ? ` --prefix=${installPrefix}` : ''}`);
 
+  // Extra settle: gracefulShutdown only waits for the server pid, but
+  // node-pty grandchildren (winpty-agent / conpty) need a beat longer
+  // to release file locks on node_modules/node-pty/build/Release/*.node.
+  // Without this beat, npm hits EBUSY/EPERM renaming the package dir.
+  await sleep(2000);
+
   const isWin = process.platform === 'win32';
   const arg = `@bakapiano/ccsm@${target}`;
   const npmArgs = ['i', '-g'];
@@ -555,26 +561,58 @@ httpServer.listen(HELPER_PORT, '127.0.0.1', () => {
     exeArgs = npmArgs;
   }
 
-  const npmExit = await new Promise((resolve) => {
-    const child = spawn(exe, exeArgs, { windowsHide: true });
-    const pipe = (stream, label) => {
-      let leftover = '';
-      stream.on('data', (chunk) => {
-        const text = leftover + chunk.toString();
-        const lines = text.split(/\r?\n/);
-        leftover = lines.pop() || '';
-        for (const line of lines) if (line) pushLine(label, line);
+  // Postinstall opens the hosted setup guide by default — fine on a
+  // first npm i, but during an in-app upgrade the user is already in
+  // the updater UI and a fresh tab to /setup/ is just noise.
+  const npmEnv = { ...process.env, CCSM_NO_AUTOLAUNCH: '1' };
+
+  const LOCK_PATTERN = /\b(EBUSY|EPERM|ENOTEMPTY|EEXIST|ELOCKED|locked|in use|cannot rename|operation not permitted)\b/i;
+
+  async function runNpmOnce() {
+    let sawLockError = false;
+    const exit = await new Promise((resolve) => {
+      const child = spawn(exe, exeArgs, { windowsHide: true, env: npmEnv });
+      const pipe = (stream, label) => {
+        let leftover = '';
+        stream.on('data', (chunk) => {
+          const text = leftover + chunk.toString();
+          const lines = text.split(/\r?\n/);
+          leftover = lines.pop() || '';
+          for (const line of lines) {
+            if (!line) continue;
+            if (LOCK_PATTERN.test(line)) sawLockError = true;
+            pushLine(label, line);
+          }
+        });
+        stream.on('end', () => { if (leftover) pushLine(label, leftover); });
+      };
+      pipe(child.stdout, 'stdout');
+      pipe(child.stderr, 'stderr');
+      child.on('error', (e) => {
+        pushLine('stderr', `spawn error: ${e.message}`);
+        resolve(-1);
       });
-      stream.on('end', () => { if (leftover) pushLine(label, leftover); });
-    };
-    pipe(child.stdout, 'stdout');
-    pipe(child.stderr, 'stderr');
-    child.on('error', (e) => {
-      pushLine('stderr', `spawn error: ${e.message}`);
-      resolve(-1);
+      child.on('exit', (code) => resolve(code));
     });
-    child.on('exit', (code) => resolve(code));
-  });
+    return { exit, sawLockError };
+  }
+
+  let npmExit = -1;
+  // Up to 3 attempts: original + 2 retries with growing backoff. Only
+  // retry when the failure looks like a file-lock issue from straggling
+  // child handles, never on a clean nonzero exit (auth, 404, etc).
+  const backoffs = [3000, 6000];
+  let attempt = 0;
+  while (true) {
+    attempt++;
+    const { exit, sawLockError } = await runNpmOnce();
+    npmExit = exit;
+    if (exit === 0) break;
+    if (!sawLockError || attempt > backoffs.length) break;
+    const wait = backoffs[attempt - 1];
+    pushLine('info', `npm failed with what looks like a file lock; retrying in ${Math.round(wait/1000)}s (attempt ${attempt + 1})…`);
+    await sleep(wait);
+  }
 
   if (npmExit !== 0) {
     errorMsg = `npm exited with code ${npmExit}`;
