@@ -9,8 +9,10 @@ import { httpBase } from './backend.js';
 import { loadConfig, refreshAll, loadSessions, loadFolders, loadWorkspaces, pollHealth } from './api.js';
 import { setToast } from './toast.js';
 import { App } from './components/App.js';
+import { installGlobalKeybindings } from './keybindings.js';
 
 loadPersisted();
+installGlobalKeybindings();
 // Window/tab title pinned to "CCSM". A MutationObserver guards against
 // Chromium standalone builds that occasionally try to inject the URL
 // into the title bar.

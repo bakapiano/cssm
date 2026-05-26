@@ -445,6 +445,13 @@ achieves the same thing without leaving the browser.
 
 ### Release process
 
+**Do not release or push without explicit permission from the user.**
+This means: don't run `git push`, don't run `npm version`, don't run
+`gh release edit --draft=false`, don't commit + tag in one breath
+because "the fix is ready". Wait for the user to say so. The instinct
+to ship is wrong here — a half-baked release on the public npm registry
+is much worse than a few minutes of waiting.
+
 Three artifacts ship per release: a git tag, a GitHub Release, and an
 npm publish. The whole thing is CI-driven — you never `npm publish`
 locally — but it requires you to drive three steps in order:

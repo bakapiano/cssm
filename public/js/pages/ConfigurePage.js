@@ -17,11 +17,12 @@ import {
 } from '../api.js';
 import { setToast } from '../toast.js';
 import { ccsmConfirm } from '../dialog.js';
+import { keybindings, setBinding, resetBinding, ACTIONS, formatCombo, comboFromEvent } from '../keybindings.js';
 import { Card } from '../components/Card.js';
 import { PageTitleBar } from '../components/PageTitleBar.js';
 import { EntityFormModal } from '../components/EntityFormModal.js';
 import { useDragSort } from '../components/useDragSort.js';
-import { IconPlus, IconPencil, IconClose, IconTerminal, IconFolder, IconBranch, IconForCliType, IconClaudeColor, IconCodexColor, IconCopilotColor } from '../icons.js';
+import { IconPlus, IconPencil, IconClose, IconTerminal, IconFolder, IconBranch, IconRefresh, IconChevronUp, IconChevronDown, IconForCliType, IconClaudeColor, IconCodexColor, IconCopilotColor } from '../icons.js';
 
 // Type → smart defaults. Choosing a type in the form auto-fills resumeArgs
 // (and command if blank) so users don't need to remember the per-CLI flag.
@@ -249,6 +250,11 @@ export function ConfigurePage() {
         </label>
       </div>
       <${WorkspaceList} />
+    </${Section}>
+
+    <${Section} title="Keyboard shortcuts"
+                meta="Click a binding to record a new combo. Press Esc to cancel.">
+      <${KeybindingsList} />
     </${Section}>
 
     </div>
@@ -509,5 +515,75 @@ function AccentPicker() {
             Reset
           </button>
         </div>` : null}
+    </div>`;
+}
+
+
+// ── Keyboard shortcuts ───────────────────────────────────────────────
+const ACTION_ICONS = {
+  'session-next': IconChevronDown,
+  'session-prev': IconChevronUp,
+};
+
+function KeybindingsList() {
+  const map = keybindings.value;
+  const [recording, setRecording] = useState(null); // actionId or null
+
+  // While recording, swallow every keydown globally and feed it into
+  // comboFromEvent. We use the capture phase so the global shortcut
+  // listener never sees the keys and never fires actions mid-record.
+  useEffect(() => {
+    if (!recording) return;
+    const onKey = (ev) => {
+      if (ev.key === 'Escape') {
+        ev.preventDefault();
+        ev.stopPropagation();
+        setRecording(null);
+        return;
+      }
+      const combo = comboFromEvent(ev);
+      if (!combo) return; // pure-modifier keydown, keep listening
+      ev.preventDefault();
+      ev.stopPropagation();
+      setBinding(recording, combo);
+      setRecording(null);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [recording]);
+
+  return html`
+    <div class="entity-list">
+      ${Object.entries(ACTIONS).map(([id, def]) => {
+        const combo = map[id];
+        const isRec = recording === id;
+        const isCustom = combo !== def.defaultCombo;
+        const Icon = ACTION_ICONS[id] || IconTerminal;
+        const badges = [{
+          label: isRec ? 'press keys…' : formatCombo(combo),
+          tone: isRec ? 'warn' : 'accent',
+        }];
+        return html`
+          <div class="entity-row" key=${id}>
+            <span class="entity-row-icon"><${Icon} /></span>
+            <span class="entity-row-main">
+              <span class="entity-row-primary">
+                ${def.label}
+                ${badges.map((b) => html`
+                  <span class=${`entity-row-badge tone-${b.tone}`}>${b.label}</span>`)}
+              </span>
+              <span class="entity-row-secondary">
+                <span class="mono">${id}</span> · default <span class="mono">${formatCombo(def.defaultCombo)}</span>
+              </span>
+            </span>
+            <span class="entity-row-actions">
+              <button class="entity-row-action" title=${isRec ? 'Cancel (Esc)' : 'Rebind'}
+                      onClick=${() => setRecording(isRec ? null : id)}><${IconPencil} /></button>
+              ${isCustom ? html`
+                <button class="entity-row-action" title="Reset to default"
+                        onClick=${() => resetBinding(id)}><${IconRefresh} /></button>` : null}
+            </span>
+          </div>`;
+      })}
     </div>`;
 }
