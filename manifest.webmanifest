@@ -2,7 +2,7 @@
   "id": "/ccsm/",
   "name": "CCSM",
   "short_name": "CCSM",
-  "version": "0.17.0",
+  "version": "0.17.2",
   "description": "Single pane over every live claude session on this machine.",
   "start_url": "./",
   "scope": "./",
@@ -19,6 +19,13 @@
       "type": "image/svg+xml",
       "sizes": "any",
       "purpose": "any"
+    }
+  ],
+  "prefer_related_applications": false,
+  "related_applications": [
+    {
+      "platform": "webapp",
+      "url": "https://bakapiano.github.io/ccsm/manifest.webmanifest"
     }
   ]
 }
