@@ -652,9 +652,17 @@ app.post('/api/sessions/new', async (req, res) => {
       workspace = all.find((w) => w.name === req.body.workspace);
       if (!workspace) return fail(`workspace ${req.body.workspace} not found`);
     } else {
+      // Collect cwds of currently-running persisted sessions so
+      // findOrCreateWorkspace can flag those workspaces as in-use and
+      // skip past ws-1 when it's already occupied.
+      const running = await persistedSessions.loadAll();
+      const busyPaths = running
+        .filter((s) => s.status === 'running')
+        .map((s) => s.cwd);
       const r = await findOrCreateWorkspace({
         workDir: cfg.workDir,
         repos: cfg.repos,
+        busyPaths,
         requireUnused: true,
       });
       workspace = r.workspace;
