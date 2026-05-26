@@ -122,21 +122,29 @@ function isSameVersion(running) {
   // (b) bind port 7777 before the helper's own respawn does. Either
   // way the upgrade derails. Bail out instead — the helper's UI on
   // 7779 is already showing the user what's happening.
-  const lockPath = path.join(HOME, '.upgrade.lock');
-  try {
-    const raw = fs.readFileSync(lockPath, 'utf8');
-    const lock = JSON.parse(raw);
-    const ageMs = Date.now() - (lock.startedAt || 0);
-    const ownerAlive = lock.pid ? pidAlive(lock.pid) : false;
-    if (ownerAlive && ageMs < 10 * 60_000) {
-      console.log(`ccsm: upgrade in progress (helper pid=${lock.pid}, ${Math.round(ageMs/1000)}s ago, target=${lock.target || '?'})`);
-      console.log(`  see http://localhost:${lock.helperPort || 7779}/ for live progress`);
-      process.exit(0);
+  //
+  // Exception: the helper itself spawns ccsm.cmd at the END of the
+  // upgrade (after npm install completes) to bring the new backend up.
+  // It sets CCSM_FROM_UPGRADE=1 in that child's env. We MUST skip the
+  // lock check in that case, otherwise we'd refuse our own respawn and
+  // the user would be stuck staring at "Backend not running".
+  if (process.env.CCSM_FROM_UPGRADE !== '1') {
+    const lockPath = path.join(HOME, '.upgrade.lock');
+    try {
+      const raw = fs.readFileSync(lockPath, 'utf8');
+      const lock = JSON.parse(raw);
+      const ageMs = Date.now() - (lock.startedAt || 0);
+      const ownerAlive = lock.pid ? pidAlive(lock.pid) : false;
+      if (ownerAlive && ageMs < 10 * 60_000) {
+        console.log(`ccsm: upgrade in progress (helper pid=${lock.pid}, ${Math.round(ageMs/1000)}s ago, target=${lock.target || '?'})`);
+        console.log(`  see http://localhost:${lock.helperPort || 7779}/ for live progress`);
+        process.exit(0);
+      }
+      // Stale lock (pid dead OR > 10min) — clean up and continue.
+      try { fs.unlinkSync(lockPath); } catch {}
+    } catch {
+      // ENOENT or parse error → no lock, proceed.
     }
-    // Stale lock (pid dead OR > 10min) — clean up and continue.
-    try { fs.unlinkSync(lockPath); } catch {}
-  } catch {
-    // ENOENT or parse error → no lock, proceed.
   }
 
   // Case 1: existing instance on the preferred port
