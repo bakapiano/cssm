@@ -187,6 +187,11 @@ export async function setSessionFolder(sessionId, folderId) {
   await loadSessions();
 }
 
+export async function reorderSessions(folderId, ids) {
+  await api('POST', '/api/sessions/reorder', { folderId: folderId || null, ids });
+  await loadSessions();
+}
+
 export async function setSessionTitle(sessionId, title) {
   await api('PUT', `/api/sessions/${sessionId}`, { title });
   await loadSessions();
@@ -280,6 +285,7 @@ export async function restartBackend() {
   return api('POST', '/api/restart');
 }
 
+let consecutiveOffline = 0;
 export async function pollHealth() {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 3000);
@@ -287,9 +293,16 @@ export async function pollHealth() {
     const r = await fetch(httpBase() + '/api/health', { signal: ctrl.signal });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const j = await r.json();
-    S.serverHealth.value = { state: 'online', version: j.version, pid: j.pid };
+    consecutiveOffline = 0;
+    S.serverHealth.value = { state: 'online', version: j.version, pid: j.pid, failureCount: 0 };
+    if (!S.hasBootedOnline.value) S.hasBootedOnline.value = true;
   } catch (e) {
-    S.serverHealth.value = { state: 'offline', error: String(e.message || e) };
+    consecutiveOffline++;
+    S.serverHealth.value = {
+      state: 'offline',
+      error: String(e.message || e),
+      failureCount: consecutiveOffline,
+    };
   } finally {
     clearTimeout(t);
   }

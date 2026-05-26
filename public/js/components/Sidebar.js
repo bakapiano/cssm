@@ -5,7 +5,7 @@ import {
   sessions, folders, sessionsByFolder, foldersCollapsed, activeSessionId,
   selectTab, selectSession, toggleSidebar, toggleFolder, setSidebarWidth,
 } from '../state.js';
-import { createFolder, renameFolder, deleteFolder, reorderFolders, setSessionFolder, deleteSession, resumeSession, setSessionTitle } from '../api.js';
+import { createFolder, renameFolder, deleteFolder, reorderFolders, setSessionFolder, reorderSessions, deleteSession, resumeSession, setSessionTitle } from '../api.js';
 import { ccsmPrompt, ccsmConfirm } from '../dialog.js';
 import { setToast } from '../toast.js';
 import { fmtAgo } from '../util.js';
@@ -36,9 +36,15 @@ function NavItem({ tab, icon, label, dirty }) {
     </button>`;
 }
 
-// One row in the session tree. Click → open in main pane. Right-click /
-// long-press not implemented; "..." menu via the inline kebab.
-function SessionRow({ s }) {
+// Module-level: the SessionRow currently being hovered as a reorder
+// drop target. Set on dragOver, cleared on dragLeave/end. Drives the
+// "above this row" insert-line indicator.
+const reorderOverSessionId = signal(null);
+
+// One row in the session tree. Click → open in main pane. Drag-to-folder
+// is handled by FolderGroup's drop zone; same-folder reorder is handled
+// here: the row is a drop target when an in-folder sibling is dragged.
+function SessionRow({ s, folderId, siblingIds }) {
   clockTick.value; // subscribe for fmtAgo refresh
   const isActive = activeSessionId.value === s.id;
   const running = s.status === 'running';
@@ -80,19 +86,67 @@ function SessionRow({ s }) {
   const onDragStart = (ev) => {
     draggingSessionId.value = s.id;
     ev.dataTransfer.effectAllowed = 'move';
-    // Firefox refuses to start a drag without some data set.
     try { ev.dataTransfer.setData('text/plain', s.id); } catch {}
   };
   const onDragEnd = () => {
     draggingSessionId.value = null;
     dragOverFolderKey.value = null;
+    reorderOverSessionId.value = null;
+  };
+
+  // Drop on a session row → place the dragged session at THIS row's
+  // position. Same folder = pure reorder. Different folder = move +
+  // position in one shot (reorderSessions sets both folderId and
+  // order in one backend call). stopPropagation so .tree-folder
+  // doesn't also fire its "drop into folder" handler — landing on a
+  // row is the more specific intent.
+  const draggedId = draggingSessionId.value;
+  const acceptDrop = !!draggedId && draggedId !== s.id;
+  const showInsertLine = acceptDrop && reorderOverSessionId.value === s.id;
+
+  const onRowDragOver = (ev) => {
+    if (!acceptDrop) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    ev.dataTransfer.dropEffect = 'move';
+    if (reorderOverSessionId.value !== s.id) reorderOverSessionId.value = s.id;
+    // Also clear the parent folder's drop-target highlight — we're
+    // overriding to "drop on this row" semantics.
+    if (dragOverFolderKey.value) dragOverFolderKey.value = null;
+  };
+  const onRowDragLeave = (ev) => {
+    if (!acceptDrop) return;
+    const rt = ev.relatedTarget;
+    if (rt && ev.currentTarget.contains(rt)) return;
+    if (reorderOverSessionId.value === s.id) reorderOverSessionId.value = null;
+  };
+  const onRowDrop = (ev) => {
+    if (!acceptDrop) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    const draggedSid = draggingSessionId.value;
+    draggingSessionId.value = null;
+    reorderOverSessionId.value = null;
+    dragOverFolderKey.value = null;
+    if (!draggedSid || !siblingIds) return;
+    // Build the new sibling sequence: remove dragged (in case it was
+    // already in this folder) then insert at this row's slot.
+    const next = siblingIds.filter((id) => id !== draggedSid);
+    const targetIdx = next.indexOf(s.id);
+    if (targetIdx < 0) return;
+    next.splice(targetIdx, 0, draggedSid);
+    reorderSessions(folderId || null, next)
+      .catch((e) => setToast(e.message, 'error'));
   };
 
   return html`
-    <div class=${`tree-session${isActive ? ' is-active' : ''}${running ? ' is-running' : ' is-stopped'}${running && s.activity === 'working' ? ' is-working' : ''}`}
+    <div class=${`tree-session${isActive ? ' is-active' : ''}${running ? ' is-running' : ' is-stopped'}${running && s.activity === 'working' ? ' is-working' : ''}${showInsertLine ? ' is-reorder-target' : ''}`}
          draggable=${true}
          onDragStart=${onDragStart}
          onDragEnd=${onDragEnd}
+         onDragOver=${onRowDragOver}
+         onDragLeave=${onRowDragLeave}
+         onDrop=${onRowDrop}
          onClick=${onClick}
          title=${`${title}\n${s.cwd}\n${running ? (s.activity === 'working' ? 'working' : 'idle') : 'stopped'} · ${s.cliId}`}>
       <span class=${`tree-dot ${running ? 'is-running' : 'is-stopped'}${running && s.activity === 'working' ? ' is-working' : ''}`}></span>
@@ -106,14 +160,20 @@ function SessionRow({ s }) {
 }
 
 function FolderGroup({ folder, sessionList, dndHandle, dndRow }) {
-  const key = folderKey(folder);
+  // folder is now always set — backend materializes a synthetic
+  // {id:'unsorted', name:'Unsorted', builtin:true} entry alongside the
+  // user folders. The bucket can be drag-reordered like any other but
+  // Rename / Delete are hidden, and drops set folderId=null so existing
+  // sessions don't need a data migration.
+  const isUnsorted = folder?.id === 'unsorted' || folder?.builtin;
+  const key = folder ? folder.id : 'unsorted';
   const collapsed = !!foldersCollapsed.value[key];
   const name = folder ? folder.name : 'Unsorted';
   const onToggle = () => toggleFolder(folder ? folder.id : null);
 
   const onRename = async (ev) => {
     ev.stopPropagation();
-    if (!folder) return;
+    if (!folder || isUnsorted) return;
     const next = await ccsmPrompt('Rename folder', folder.name, { title: folder.name, okLabel: 'Save' });
     if (next === null || !next.trim()) return;
     try { await renameFolder(folder.id, next.trim()); }
@@ -122,7 +182,7 @@ function FolderGroup({ folder, sessionList, dndHandle, dndRow }) {
 
   const onDelete = async (ev) => {
     ev.stopPropagation();
-    if (!folder) return;
+    if (!folder || isUnsorted) return;
     const ok = await ccsmConfirm(`Delete folder "${folder.name}"? Sessions inside move to Unsorted.`, {
       title: 'Delete folder', okLabel: 'Delete', danger: true });
     if (!ok) return;
@@ -135,11 +195,16 @@ function FolderGroup({ folder, sessionList, dndHandle, dndRow }) {
   // handlers (in dndRow) short-circuit when no folder is being dragged,
   // and our handlers below short-circuit when no session is being
   // dragged — so composing both is safe.
+  // When the dragged session lands on the Unsorted bucket, we persist
+  // it with folderId=null (matches the existing data model — sessions
+  // with no folder are null, not 'unsorted'). Same for the sameFolder
+  // guard below.
+  const dropFolderId = isUnsorted ? null : (folder ? folder.id : null);
   const draggedSession = draggingSessionId.value
     ? sessions.value.find((s) => s.id === draggingSessionId.value)
     : null;
   const sameFolder = draggedSession
-    && (draggedSession.folderId || null) === (folder ? folder.id : null);
+    && (draggedSession.folderId || null) === dropFolderId;
   const isOver = !sameFolder && dragOverFolderKey.value === key;
 
   const onSessionDragOver = (ev) => {
@@ -161,8 +226,8 @@ function FolderGroup({ folder, sessionList, dndHandle, dndRow }) {
     if (!sid || sameFolder) return;
     ev.preventDefault();
     ev.stopPropagation();
-    setSessionFolder(sid, folder ? folder.id : null)
-      .then(() => setToast(folder ? `moved to ${folder.name}` : 'moved to Unsorted'))
+    setSessionFolder(sid, dropFolderId)
+      .then(() => setToast(`moved to ${name}`))
       .catch((e) => setToast(e.message, 'error'));
   };
 
@@ -185,7 +250,7 @@ function FolderGroup({ folder, sessionList, dndHandle, dndRow }) {
           ${collapsed ? html`<${IconFolder} />` : html`<${IconFolderOpen} />`}
         </span>
         <span class="tree-folder-name">${name}</span>
-        ${folder ? html`
+        ${folder && !isUnsorted ? html`
           <span class="tree-folder-actions">
             <button class="tree-folder-action" title="rename" onClick=${onRename}><${IconPencil} /></button>
             <button class="tree-folder-action" title="delete" onClick=${onDelete}><${IconClose} /></button>
@@ -195,7 +260,15 @@ function FolderGroup({ folder, sessionList, dndHandle, dndRow }) {
         <div class="tree-folder-body">
           ${sessionList.length === 0
             ? html`<div class="tree-empty">no sessions</div>`
-            : sessionList.map((s) => html`<${SessionRow} key=${s.id} s=${s} />`)}
+            : (() => {
+                // siblingIds captured once per render so each row sees a
+                // consistent snapshot for splice math.
+                const siblingIds = sessionList.map((x) => x.id);
+                return sessionList.map((s) => html`
+                  <${SessionRow} key=${s.id} s=${s}
+                                 folderId=${dropFolderId}
+                                 siblingIds=${siblingIds} />`);
+              })()}
         </div>
       ` : null}
     </div>`;
@@ -232,7 +305,6 @@ function SessionTree() {
                         sessionList=${grouped.get(f.id) || []}
                         dndHandle=${dnd.handleProps(f.id)}
                         dndRow=${dnd.rowProps(f.id)} />`)}
-      <${FolderGroup} folder=${null} sessionList=${grouped.get(null) || []} />
     </div>`;
 }
 

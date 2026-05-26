@@ -301,3 +301,180 @@
   0%, 100% { box-shadow: 0 0 0 0 rgba(26, 24, 21, 0.25); }
   50%      { box-shadow: 0 0 0 4px rgba(26, 24, 21, 0); }
 }
+
+/* ── Health overlay · full-screen modal while backend is down ─────── */
+.health-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(26, 24, 21, 0.48);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: health-fade-in 0.2s ease-out;
+}
+@keyframes health-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.health-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 36px 44px;
+  max-width: 420px;
+  text-align: center;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  font-family: var(--body);
+}
+.health-spinner {
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent, #4a73a5);
+  border-radius: 50%;
+  margin: 0 auto 14px;
+  animation: health-spin 0.8s linear infinite;
+}
+@keyframes health-spin {
+  to { transform: rotate(360deg); }
+}
+.health-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--red, #b73f3f);
+  margin: 0 auto 14px;
+}
+.health-title {
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  color: var(--ink);
+  margin-bottom: 6px;
+}
+.health-meta {
+  font-size: 12.5px;
+  color: var(--ink-mid);
+  line-height: 1.4;
+  margin-bottom: 14px;
+}
+.health-start {
+  display: inline-block;
+  margin-top: 4px;
+  text-decoration: none;
+}
+.health-hint {
+  font-size: 11.5px;
+  color: var(--ink-muted);
+  margin-top: 14px;
+}
+.health-hint code {
+  font-family: var(--mono);
+  background: var(--bg);
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+
+/* ── Keybinding recorder modal ───────────────────────────────────── */
+.kbd-recorder-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(26, 24, 21, 0.5);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: kbd-rec-fade-in 0.16s ease-out;
+}
+@keyframes kbd-rec-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.kbd-recorder-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 32px 40px;
+  min-width: 380px;
+  max-width: 520px;
+  text-align: center;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  font-family: var(--body);
+}
+.kbd-recorder-label {
+  font-size: 12.5px;
+  color: var(--ink-mid);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.kbd-recorder-action {
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin-bottom: 24px;
+}
+.kbd-recorder-keys {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 48px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+.kbd-recorder-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  height: 36px;
+  padding: 0 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  animation: kbd-rec-pop 0.12s ease-out;
+}
+@keyframes kbd-rec-pop {
+  from { transform: scale(0.85); opacity: 0.4; }
+  to   { transform: scale(1);    opacity: 1; }
+}
+.kbd-recorder-plus {
+  color: var(--ink-muted);
+  font-size: 14px;
+  font-weight: 300;
+}
+.kbd-recorder-placeholder {
+  color: var(--ink-muted);
+  font-size: 13px;
+}
+.kbd-recorder-actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.kbd-recorder-hint {
+  font-size: 11.5px;
+  color: var(--ink-muted);
+}
+.kbd-recorder-hint kbd {
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 5px;
+}

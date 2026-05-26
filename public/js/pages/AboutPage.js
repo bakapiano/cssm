@@ -67,21 +67,39 @@ function UpgradeCard() {
     try {
       const r = await api('POST', '/api/upgrade', { target: 'latest' });
       setToast(`upgrading to v${info.latest} · backend will restart`);
-      if (r?.closeFrontend) {
-        // Backend will respawn with a fresh browser window — close this
-        // one so the user isn't stuck on the OfflineBanner during the
-        // upgrade window. window.close() only works when the window was
-        // script-opened (Edge --app=, our spawned browser); regular tabs
-        // ignore it silently, which is fine (OfflineBanner takes over).
+      if (r?.helperUrl) {
+        setTimeout(() => { location.href = r.helperUrl; }, 300);
+      } else if (r?.closeFrontend) {
         setTimeout(() => { try { window.close(); } catch {} }, 400);
       }
     } catch (e) {
       setUpgrading(false);
       setToast(e.message, 'error');
     }
-    // No "finally" reset — the server is about to shut down, and the
-    // OfflineBanner takes over UI. When the router reroutes us to the new
-    // version's frontend, this component re-mounts fresh.
+  };
+
+  // Dev-only sandbox test path: reinstall the SAME version into a
+  // throwaway prefix under ~/.ccsm-dev/test-install. Exercises the
+  // whole helper UI + SSE + lockfile flow without touching the user's
+  // global install. respawn=false keeps the helper showing "done"
+  // until it self-exits.
+  const onTestUpgrade = async () => {
+    if (!info?.current) return;
+    setUpgrading(true);
+    try {
+      const r = await api('POST', '/api/upgrade', {
+        target: info.current,
+        installPrefix: 'C:\\Users\\jiannanli\\.ccsm-dev\\test-install',
+        respawn: false,
+      });
+      setToast(`test upgrade · reinstalling v${info.current} to sandbox`);
+      if (r?.helperUrl) {
+        setTimeout(() => { location.href = r.helperUrl; }, 300);
+      }
+    } catch (e) {
+      setUpgrading(false);
+      setToast(e.message, 'error');
+    }
   };
 
   const current = info?.current || serverHealth.value.version || '';
@@ -114,6 +132,12 @@ function UpgradeCard() {
           ${updateAvailable ? html`
             <button class="action primary" onClick=${onUpgrade} disabled=${upgrading}>
               ${upgrading ? 'Upgrading…' : `Upgrade to v${latest}`}
+            </button>
+          ` : null}
+          ${info?.devMode && !updateAvailable ? html`
+            <button class="action subtle" onClick=${onTestUpgrade} disabled=${upgrading}
+                    title="Reinstall to a sandbox prefix to exercise the updater UI without touching prod">
+              ${upgrading ? 'Testing…' : 'Test upgrade flow'}
             </button>
           ` : null}
         </div>

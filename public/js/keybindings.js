@@ -10,11 +10,15 @@
 // never bind those combos.
 
 import { signal } from '@preact/signals';
-import { activeSessionId, sessions, folders, sessionsByFolder, selectSession } from './state.js';
+import { activeSessionId, sessions, folders, sessionsByFolder, selectSession, UNSORTED_KEY } from './state.js';
+import { reorderSessions } from './api.js';
+import { setToast } from './toast.js';
 
 export const ACTIONS = {
-  'session-next': { label: 'Next session', defaultCombo: 'Ctrl+Alt+ArrowDown' },
-  'session-prev': { label: 'Previous session', defaultCombo: 'Ctrl+Alt+ArrowUp' },
+  'session-next':      { label: 'Next session',          defaultCombo: 'Ctrl+Alt+ArrowDown' },
+  'session-prev':      { label: 'Previous session',      defaultCombo: 'Ctrl+Alt+ArrowUp' },
+  'session-move-down': { label: 'Move session down',     defaultCombo: 'Ctrl+Alt+Shift+ArrowDown' },
+  'session-move-up':   { label: 'Move session up',       defaultCombo: 'Ctrl+Alt+Shift+ArrowUp' },
 };
 
 const LS_KEY = 'ccsm.keybindings';
@@ -76,11 +80,12 @@ export function comboFromEvent(ev) {
 function flatSidebarOrder() {
   const grouped = sessionsByFolder.value;
   const out = [];
+  // folders.value now includes the synthetic Unsorted entry inline at
+  // its own user-set order — no need to special-case the bucket here.
   for (const f of folders.value) {
     const list = grouped.get(f.id) || [];
     for (const s of list) out.push(s.id);
   }
-  for (const s of grouped.get(null) || []) out.push(s.id);
   return out;
 }
 
@@ -98,9 +103,34 @@ function moveSelection(delta) {
   if (next) selectSession(next);
 }
 
+// Move the active session one slot up/down within its current folder.
+// Clamps at folder boundaries (doesn't cross folders — that's what
+// drag-and-drop is for). No-op when there's no active session, or
+// when the session is already at the folder edge.
+function moveActiveSessionInFolder(delta) {
+  const cur = activeSessionId.value;
+  if (!cur) return;
+  const s = sessions.value.find((x) => x.id === cur);
+  if (!s) return;
+  const folderId = s.folderId || null;
+  const folderKey = folderId || UNSORTED_KEY;
+  const siblings = sessionsByFolder.value.get(folderKey) || [];
+  const ids = siblings.map((x) => x.id);
+  const idx = ids.indexOf(cur);
+  if (idx < 0) return;
+  const target = idx + delta;
+  if (target < 0 || target >= ids.length) return;
+  const next = ids.slice();
+  next.splice(idx, 1);
+  next.splice(target, 0, cur);
+  reorderSessions(folderId, next).catch((e) => setToast(e.message, 'error'));
+}
+
 const HANDLERS = {
-  'session-next': () => moveSelection(+1),
-  'session-prev': () => moveSelection(-1),
+  'session-next':      () => moveSelection(+1),
+  'session-prev':      () => moveSelection(-1),
+  'session-move-down': () => moveActiveSessionInFolder(+1),
+  'session-move-up':   () => moveActiveSessionInFolder(-1),
 };
 
 // Should we suppress shortcut handling because the user is typing into

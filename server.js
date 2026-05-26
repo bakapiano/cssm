@@ -506,6 +506,24 @@ app.delete('/api/sessions/:id', asyncH(async (req, res) => {
   res.json({ removed });
 }));
 
+// Reorder sessions within a folder. Body: { folderId, ids } where ids
+// is the new sequence of session ids in their final display order
+// inside that folder. Each session gets `folderId` + `order: 0..N-1`
+// assigned. Setting folderId here (rather than requiring a separate
+// PUT) lets the drag-and-drop UI move a session across folders AND
+// drop it at a specific position in one shot — without the call, the
+// move would either land at the end of the destination folder (just
+// PUT folderId) or leave it in place (just reorder).
+app.post('/api/sessions/reorder', asyncH(async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids : null;
+  if (!ids) return res.status(400).json({ error: 'ids array required' });
+  const folderId = req.body?.folderId ?? null;
+  for (let i = 0; i < ids.length; i++) {
+    try { await persistedSessions.update(ids[i], { folderId, order: i }); } catch {}
+  }
+  res.json({ ok: true, count: ids.length });
+}));
+
 // ---- workspaces ----
 
 // ---- directory browser ----
@@ -1027,6 +1045,11 @@ function cmpSemver(a, b) {
 app.get('/api/version', asyncH(async (req, res) => {
   const force = String(req.query.refresh || '') === '1';
   const now = Date.now();
+  // devMode: set when the server was launched from scripts/dev.js
+  // (CCSM_DEV=1). Lets the About page render a "test upgrade flow"
+  // button that re-installs to a sandbox prefix without affecting the
+  // user's global ccsm install.
+  const devMode = process.env.CCSM_DEV === '1';
   if (!force && versionCache && (now - versionCache.fetchedAt) < VERSION_CACHE_MS) {
     return res.json({
       current: pkg.version,
@@ -1034,6 +1057,7 @@ app.get('/api/version', asyncH(async (req, res) => {
       updateAvailable: cmpSemver(versionCache.latest, pkg.version) > 0,
       fetchedAt: versionCache.fetchedAt,
       cached: true,
+      devMode,
     });
   }
   try {
@@ -1045,16 +1069,16 @@ app.get('/api/version', asyncH(async (req, res) => {
       updateAvailable: cmpSemver(latest, pkg.version) > 0,
       fetchedAt: now,
       cached: false,
+      devMode,
     });
   } catch (e) {
-    // Swallow: surface "unknown" so the UI doesn't keep showing a stale
-    // "update available" badge based on a 6-hour-old cached value.
     res.json({
       current: pkg.version,
       latest: null,
       updateAvailable: false,
       fetchedAt: now,
       error: String(e.message || e),
+      devMode,
     });
   }
 }));
@@ -1094,9 +1118,24 @@ app.post('/api/upgrade', asyncH(async (req, res) => {
     upgradeInFlight = false;
     return res.status(500).json({ error: `helper copy failed: ${e.message}` });
   }
-  const args = [helperTmp, target, String(currentPort), String(process.pid), installPrefix, respawn];
+  // Where to send the user back when the upgrade succeeds. In prod
+  // that's the GH Pages router (it'll re-probe localhost:7777 and
+  // redirect to the matching per-version frontend); in dev (CCSM_DEV=1)
+  // that's our local server on whatever port we're listening on, so
+  // the test sandbox flow returns to the dev instance instead of
+  // hitting GH Pages (which doesn't know about port 7788).
+  const redirectTo = frontendUrl || `http://localhost:${currentPort}/`;
 
-  res.json({ ok: true, started: true, target, helper: helperTmp, closeFrontend: true });
+  const args = [helperTmp, target, String(currentPort), String(process.pid), installPrefix, respawn, redirectTo];
+
+  res.json({
+    ok: true,
+    started: true,
+    target,
+    helper: helperTmp,
+    helperUrl: 'http://localhost:7779/',
+    closeFrontend: false,
+  });
 
   // Flush response, then spawn helper detached and gracefulShutdown so
   // the helper's npm install isn't fighting our open file handles.

@@ -545,6 +545,23 @@ body.is-resizing-sidebar * {
   background: var(--sidebar-active);
   font-weight: 500;
 }
+/* Drop-line shown above the row when a sibling session is being
+   dragged over it for within-folder reorder. Top-only inset shadow
+   reads as a 2px insertion mark without shifting layout. */
+.tree-session.is-reorder-target {
+  position: relative;
+}
+.tree-session.is-reorder-target::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 4px;
+  right: 4px;
+  height: 2px;
+  background: var(--ink-mid);
+  border-radius: 1px;
+  pointer-events: none;
+}
 /* Status dot · deliberately understated. The earlier version had a
    green dot + soft glow + expanding halo pulse; in a sidebar with
    eight running sessions it read as a row of strobing alerts. Now:

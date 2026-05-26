@@ -13,6 +13,10 @@ export const sessions     = signal([]);
 export const folders      = signal([]);   // [{id,name,order,createdAt}]
 export const workspaces   = signal([]);
 export const serverHealth = signal({ state: 'connecting' });
+// Flips true the first time we successfully reach the backend in this
+// frontend session. Gates UI (HealthOverlay) so it doesn't pop on the
+// very first boot probe while the page is still wiring up.
+export const hasBootedOnline = signal(false);
 
 // ── ui state (persisted in localStorage where noted) ───────────
 export const activeTab        = signal('sessions');
@@ -48,17 +52,32 @@ export const isInstalledPwa   = signal(false);           // running inside an in
 // matching folder hasn't loaded yet — that way on first paint sessions
 // don't all collapse into Unsorted and then snap back into their real
 // folder a few ms later when /api/folders resolves.
+// "Unsorted" is keyed as 'unsorted' (not null) so it can be looked up
+// alongside real folders by Sidebar/keybindings iterating folders.value
+// — backend exposes a synthetic folder with id='unsorted' that's always
+// present, drag-reorderable like real folders.
+export const UNSORTED_KEY = 'unsorted';
 export const sessionsByFolder = computed(() => {
   const groups = new Map();
-  groups.set(null, []);
+  groups.set(UNSORTED_KEY, []);
   for (const f of folders.value) groups.set(f.id, []);
   for (const s of sessions.value) {
-    const key = s.folderId || null;
+    const key = s.folderId || UNSORTED_KEY;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(s);
   }
   for (const list of groups.values()) {
-    list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    // Stable sort: explicit `order` field first (set by user drag), then
+    // createdAt desc as fallback. Sessions without `order` fall to the
+    // top (newer-first) which is the legacy behavior.
+    list.sort((a, b) => {
+      const oa = typeof a.order === 'number' ? a.order : null;
+      const ob = typeof b.order === 'number' ? b.order : null;
+      if (oa !== null && ob !== null) return oa - ob;
+      if (oa !== null) return -1;
+      if (ob !== null) return 1;
+      return (b.createdAt || 0) - (a.createdAt || 0);
+    });
   }
   return groups;
 });

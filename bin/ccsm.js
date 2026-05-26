@@ -39,6 +39,15 @@ function loadPreferredPort() {
   }
 }
 
+// Cheap "is this pid still alive" check using kill(pid, 0). Returns
+// true for live pids we own, also true for pids in other security
+// contexts (EPERM means it exists, we just can't signal it).
+function pidAlive(pid) {
+  if (!pid) return false;
+  try { process.kill(pid, 0); return true; }
+  catch (e) { return e.code === 'EPERM'; }
+}
+
 function probe(port, timeoutMs = 800) {
   return new Promise((resolve) => {
     const req = http.get(`http://localhost:${port}/api/health`, { timeout: timeoutMs }, (res) => {
@@ -105,6 +114,30 @@ function isSameVersion(running) {
   const protocol = parseProtocolArg();
   const SILENT = !!protocol;  // ccsm:// invocations should not open a new browser
   const port = loadPreferredPort();
+
+  // Upgrade-in-progress guard. The updater helper writes
+  // ~/.ccsm/.upgrade.lock at start. If a ccsm:// click (or any other
+  // launcher trigger) races during an in-flight install, spawning a
+  // new server would: (a) fight npm for the package dir, EBUSY; or
+  // (b) bind port 7777 before the helper's own respawn does. Either
+  // way the upgrade derails. Bail out instead — the helper's UI on
+  // 7779 is already showing the user what's happening.
+  const lockPath = path.join(HOME, '.upgrade.lock');
+  try {
+    const raw = fs.readFileSync(lockPath, 'utf8');
+    const lock = JSON.parse(raw);
+    const ageMs = Date.now() - (lock.startedAt || 0);
+    const ownerAlive = lock.pid ? pidAlive(lock.pid) : false;
+    if (ownerAlive && ageMs < 10 * 60_000) {
+      console.log(`ccsm: upgrade in progress (helper pid=${lock.pid}, ${Math.round(ageMs/1000)}s ago, target=${lock.target || '?'})`);
+      console.log(`  see http://localhost:${lock.helperPort || 7779}/ for live progress`);
+      process.exit(0);
+    }
+    // Stale lock (pid dead OR > 10min) — clean up and continue.
+    try { fs.unlinkSync(lockPath); } catch {}
+  } catch {
+    // ENOENT or parse error → no lock, proceed.
+  }
 
   // Case 1: existing instance on the preferred port
   let existing = await probe(port);
