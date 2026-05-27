@@ -1,0 +1,10 @@
+/* Narrow viewports: force-collapse sidebar, single-col config grid */
+
+@media (max-width: 900px) {
+  .app { grid-template-columns: var(--sidebar-w-collapsed) 1fr !important; }
+  .sidebar { padding: 0 var(--s-2); }
+  .brand-name, .nav-label, .nav-badge { opacity: 0; pointer-events: none; }
+  .main { padding: 0 var(--s-4); }
+  .page-head { flex-direction: column; gap: var(--s-3); }
+  .config-grid { grid-template-columns: 1fr; }
+}
