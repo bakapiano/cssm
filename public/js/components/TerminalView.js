@@ -113,7 +113,14 @@ export function TerminalView({ terminalId }) {
     wsRef.current = ws;
 
     ws.onopen = () => {
-      // tell server the initial size (cols/rows after fit)
+      // Fit synchronously here before reading cols/rows. On localhost the
+      // WS handshake usually completes within a few ms — well before the
+      // rAF-scheduled initial fit runs — so without this we'd ship the
+      // xterm.js default 80x24 to the PTY, claude would print its prompt
+      // wrapped at 80 cols, and the follow-up resize from the rAF fit
+      // wouldn't reflow the already-emitted bytes. Visible as squeezed
+      // text on every session switch.
+      try { fit.fit(); } catch {}
       ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
     };
     ws.onmessage = (ev) => {
