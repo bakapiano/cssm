@@ -81,7 +81,15 @@ body.is-app:not(.is-wco) .page-title-bar {
   display: none;
 }
 body.is-app:not(.is-wco) .app {
-  border-top: 1px solid var(--border);
+  /* Hairline separator under the OS title bar. Painted as an inset
+     box-shadow rather than a border so it doesn't change .app's box
+     model — a real border-top added 1px to .app's height, and the
+     grid's implicit row auto-sized off content (.main reporting 720)
+     rather than the (now 719px) container, so .main overflowed the
+     viewport by exactly 1px and put a permanent vertical scrollbar
+     down the right of the terminal page. Inset shadow draws the same
+     line with zero layout cost. */
+  box-shadow: inset 0 1px 0 var(--border);
 }
 /* With page-title-bar hidden, session-pane's `margin-top: calc(-1 *
    var(--s-4))` — designed to flush it against the (now invisible)
