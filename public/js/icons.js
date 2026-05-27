@@ -125,6 +125,11 @@ export const IconBranch = ic('0 0 24 24', html`
   <circle cx="6" cy="18" r="3"/>
   <path d="M18 9a9 9 0 0 1-9 9"/>
 `, 18);
+export const IconMoreVert = ic('0 0 24 24', html`
+  <circle cx="12" cy="5" r="1.6" fill="currentColor" stroke="none"/>
+  <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/>
+  <circle cx="12" cy="19" r="1.6" fill="currentColor" stroke="none"/>
+`, 16);
 
 // Brand-colored CLI marks. These use external SVG assets (full color),
 // rendered as <img> so the gradients / fills in the file are preserved.

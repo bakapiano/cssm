@@ -92,8 +92,7 @@ function applyNarrow() { sidebarForcedCollapsed.value = narrowMq.matches; }
 applyNarrow();
 narrowMq.addEventListener('change', applyNarrow);
 
-// Counter-zoom for chrome bars (page-title-bar, session-actions). Browser
-// page zoom (Ctrl+wheel) scales every CSS px including our header heights;
+// Counter-zoom for the page-title-bar. Browser page zoom (Ctrl+wheel) scales every CSS px including our header heights;
 // without this, the header gets visually taller at 150%+ which the user
 // usually doesn't want. We detect zoom via outerWidth/innerWidth and write
 // 1/zoom into --anti-zoom so the CSS can `calc(40px * var(--anti-zoom))`

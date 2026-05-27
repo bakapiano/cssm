@@ -226,55 +226,146 @@
   min-height: 0;
   height: 100%;
   margin: 0 calc(-1 * var(--s-4));
-  /* Cancel the tab-panel gap above so the terminal sits flush under the
-     title bar with no white band. */
-  margin-top: calc(-1 * var(--s-4));
   background: var(--bg-elev);
   overflow: hidden;
 }
-.session-actions {
+
+/* Session tabs · sits between the page-title-bar and the session-pane.
+   One row of small tab buttons; the active one has a darker bg + accent
+   underline. Last child is a "+" button that bounces to /launch. The
+   strip is full-bleed (matches .session-pane horizontal extents). */
+.session-tabs {
   display: flex;
   align-items: stretch;
-  justify-content: flex-start;
   gap: 0;
-  height: calc(24px * var(--anti-zoom, 1));
-  min-height: calc(24px * var(--anti-zoom, 1));
-  max-height: calc(24px * var(--anti-zoom, 1));
+  height: 30px;
   flex-shrink: 0;
-  box-sizing: border-box;
-  padding: 0;
-  background: var(--accent);
-  border-top: 0;
+  padding: 0 2px 0 0;
+  /* Negative bottom margin cancels the tab-panel's gap to the
+     session-pane underneath, so the strip sits flush against the
+     terminal. Negative horizontal margin cancels .main's padding so
+     the strip is full-bleed like the terminal underneath. */
+  margin: 0 calc(-1 * var(--s-4)) calc(-1 * var(--s-4));
+  background: #2d2a26;
+  border-bottom: 0;
 }
-.session-actions .action {
+.session-tabs-list {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+.session-tabs-right {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding-right: 2px;
+}
+/* Close the gap to the page-title-bar above — only when there IS one.
+   In standalone PWA the title-bar is display:none and .session-tabs is
+   the first tab-panel child; a negative margin-top there would push
+   the strip up over the OS title-bar border. */
+.page-title-bar + .session-tabs {
+  margin-top: calc(-1 * var(--s-4));
+}
+.session-tab {
+  appearance: none;
+  background: #423d37;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;          /* overlap container border-bottom */
+  padding: 0 10px;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  height: 100%;
-  padding: 0 10px;
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 1;
-  color: rgba(255, 255, 255, 0.85);
-  background: transparent;
-  border: 0;
-  border-radius: 0;
+  gap: 6px;
+  font: inherit;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.65);
   cursor: pointer;
+  max-width: 200px;
+  min-width: 0;
   transition: background-color .12s, color .12s;
 }
-.session-actions .action:hover {
+.session-tab:hover { background: #4f4942; color: #fff; }
+.session-tab.is-active {
+  background: var(--ink);
   color: #fff;
-  background: rgba(255, 255, 255, 0.14);
+  border-bottom-color: var(--ink);
 }
-.session-actions .action.danger:hover {
+.session-tab-icon { display: inline-flex; flex-shrink: 0; }
+.session-tab-icon svg { width: 14px; height: 14px; }
+.session-tab-icon img { width: 14px; height: 14px; }
+.session-tab-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.session-tab-meta { color: rgba(255, 255, 255, 0.5); font-size: 11px; }
+.session-tab.is-active .session-tab-meta { color: rgba(255, 255, 255, 0.6); }
+.session-tab-add {
+  background: transparent;
+  max-width: none;
+  padding: 0 8px;
   color: #fff;
-  background: rgba(0, 0, 0, 0.22);
 }
-.session-actions .action svg {
-  width: 13px;
-  height: 13px;
-  stroke-width: 1.75;
+.session-tab-add:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
+.session-tab-add svg { width: 14px; height: 14px; }
+
+/* Kebab in the page-title-bar (top-right). Compact 24px square so it
+   doesn't dominate the masthead. In WCO mode the title-bar already
+   reserves padding-right for OS controls, so this slides cleanly to
+   the left of them. */
+.session-menu-btn {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color .12s, color .12s;
 }
+.session-menu-btn:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
+.session-menu-btn svg { width: 16px; height: 16px; }
+
+.session-menu {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px;
+  box-shadow: var(--shadow-md, 0 4px 16px rgba(0,0,0,0.08));
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.session-menu-item {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 7px 10px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+.session-menu-item:hover { background: var(--bg); }
+.session-menu-item.danger { color: var(--danger, #b73f3f); }
+.session-menu-item.danger:hover { background: rgba(183, 63, 63, 0.08); }
+.session-menu-item svg { width: 14px; height: 14px; }
+
 .session-pane-head {
   display: flex;
   align-items: center;

@@ -1,18 +1,78 @@
 // Sessions page · the main pane. Shows the terminal for the currently
 // selected session (activeSessionId), with a thin header providing
-// session metadata + rename/delete actions. When a session is selected
-// but not running we auto-resume it — no manual button.
+// session metadata + a session-tabs strip (future multi-tab support)
+// and a kebab menu top-right for per-session actions. When a session is
+// selected but not running we auto-resume it — no manual button.
 
 import { html } from '../html.js';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { activeSessionId, sessions, config, selectTab, selectSession, clockTick } from '../state.js';
 import { resumeSession, clearResumeFailure, deleteSession, setSessionTitle } from '../api.js';
 import { setToast } from '../toast.js';
 import { ccsmConfirm, ccsmPrompt } from '../dialog.js';
 import { TerminalView } from '../components/TerminalView.js';
 import { PageTitleBar } from '../components/PageTitleBar.js';
-import { IconPencil, IconClose, IconBranch } from '../icons.js';
+import { Popover } from '../components/Popover.js';
+import { IconMoreVert, IconPencil, IconClose, IconPlus, IconForCliType, IconTerminal } from '../icons.js';
 import { fmtAgo } from '../util.js';
+
+function SessionTabs({ activeId, onActivate, onNew, kebab }) {
+  // For now we only show the currently active session as a single tab —
+  // other open sessions are hidden, and the "+ new" affordance is parked
+  // until multi-tab UX lands.
+  const active = activeId ? sessions.value.find((s) => s.id === activeId) : null;
+  if (!active) return null;
+  const open = [active];
+  return html`
+    <div class="session-tabs" role="tablist">
+      <div class="session-tabs-list">
+        ${open.map((s) => {
+          const cli = (config.value?.clis || []).find((c) => c.id === s.cliId);
+          const Icon = IconForCliType(cli?.type) || IconTerminal;
+          const t = s.title || s.workspace || s.id.slice(0, 12);
+          const isActive = s.id === activeId;
+          return html`
+            <button key=${s.id}
+                    role="tab"
+                    aria-selected=${isActive}
+                    class=${`session-tab${isActive ? ' is-active' : ''}`}
+                    onClick=${() => onActivate(s.id)}
+                    title=${`${t} · ${s.cwd}`}>
+              <span class="session-tab-icon"><${Icon} /></span>
+              <span class="session-tab-label">${t}</span>
+              ${s.status !== 'running' ? html`<span class="session-tab-meta">·</span>` : null}
+            </button>`;
+        })}
+        ${/* <button class="session-tab session-tab-add" onClick=${onNew} title="New session">
+          <${IconPlus} />
+        </button> */ null}
+      </div>
+      ${kebab ? html`<div class="session-tabs-right">${kebab}</div>` : null}
+    </div>`;
+}
+
+function SessionMenu({ session, onRename, onDelete }) {
+  const [open, setOpen] = useState(false);
+  const anchor = useRef(null);
+  return html`
+    <button class="session-menu-btn" ref=${anchor}
+            aria-label="Session actions" title="Session actions"
+            onClick=${() => setOpen((v) => !v)}>
+      <${IconMoreVert} />
+    </button>
+    ${open ? html`
+      <${Popover} anchor=${anchor} align="right" width=${180}
+                  onClose=${() => setOpen(false)}>
+        <div class="session-menu">
+          <button class="session-menu-item" onClick=${() => { setOpen(false); onRename(); }}>
+            <${IconPencil} /> Rename
+          </button>
+          <button class="session-menu-item danger" onClick=${() => { setOpen(false); onDelete(); }}>
+            <${IconClose} /> Delete
+          </button>
+        </div>
+      </${Popover}>` : null}`;
+}
 
 export function SessionsPage() {
   clockTick.value; // resubscribe fmtAgo
@@ -49,6 +109,11 @@ export function SessionsPage() {
   const running = session.status === 'running';
   const title = session.title || session.workspace || session.id.slice(0, 12);
 
+  const onRetry = () => {
+    clearResumeFailure(session.id);
+    setResumeError(null);
+    setRetryNonce((n) => n + 1);
+  };
   const onRename = async () => {
     const next = await ccsmPrompt('Rename session', title, { okLabel: 'Save' });
     if (next === null) return;
@@ -64,12 +129,6 @@ export function SessionsPage() {
       activeSessionId.value = null;
     } catch (e) { setToast(e.message, 'error'); }
   };
-  const onRetry = () => {
-    clearResumeFailure(session.id);
-    setResumeError(null);
-    setRetryNonce((n) => n + 1);
-  };
-  const onFork = () => { setToast('Fork is not wired up yet'); };
 
   return html`
     <${PageTitleBar} title=${html`
@@ -82,8 +141,12 @@ export function SessionsPage() {
           <span>·</span>
           <span>${running ? 'running' : (resumeError ? 'resume failed' : 'resuming…')}</span>
         </span>
-      `}>
-    </${PageTitleBar}>
+      `} />
+    <${SessionTabs}
+      activeId=${session.id}
+      onActivate=${(sid) => selectSession(sid)}
+      onNew=${() => selectTab('launch')}
+      kebab=${html`<${SessionMenu} session=${session} onRename=${onRename} onDelete=${onDelete} />`} />
     <div class="session-pane">
       <div class="session-pane-body">
         ${running
@@ -97,22 +160,6 @@ export function SessionsPage() {
                 <div>Resuming session…</div>
               `}
             </div>`}
-      </div>
-      <div class="session-actions">
-        ${/* Fork button — wired but disabled; turn back on once the
-           --fork-session / codex fork / copilot fs-copy integrations
-           are in place. See discussion 2026-05-27. */ ''}
-        ${false ? html`
-          <button class="action subtle" onClick=${onFork} title="Fork session">
-            <${IconBranch} /> Fork
-          </button>
-        ` : null}
-        <button class="action subtle" onClick=${onRename} title="Rename session">
-          <${IconPencil} /> Rename
-        </button>
-        <button class="action subtle danger" onClick=${onDelete} title="Delete session">
-          <${IconClose} /> Delete
-        </button>
       </div>
     </div>`;
 }

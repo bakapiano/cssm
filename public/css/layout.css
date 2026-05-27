@@ -98,12 +98,15 @@ body.is-resizing-sidebar .app {
 }
 
 /* Per-page title strip — height matches the sidebar collapse-toggle
-   (28px) so the topmost row of the window reads as one unified band. */
+   (28px) so the topmost row of the window reads as one unified band.
+   Title on the left, actions slot on the right. The WCO padding-right
+   reservation (wco.css) shifts actions inward so they clear the OS
+   window controls overlay. */
 .page-title-bar {
   display: flex;
-  flex-direction: row-reverse;
+  flex-direction: row;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: space-between;
   gap: var(--s-3);
   height: calc(40px * var(--anti-zoom, 1));
   min-height: calc(40px * var(--anti-zoom, 1));
