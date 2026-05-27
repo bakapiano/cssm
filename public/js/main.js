@@ -3,8 +3,9 @@
 // the mount root.
 
 import { render } from 'preact';
+import { effect } from '@preact/signals';
 import { html } from './html.js';
-import { loadPersisted, clockTick, lastRefreshAt, installPrompt, isInstalledPwa, sidebarForcedCollapsed } from './state.js';
+import { loadPersisted, clockTick, lastRefreshAt, installPrompt, isInstalledPwa, sidebarForcedCollapsed, activeTab, activeSessionId, sessions, TAB_HEADINGS } from './state.js';
 import { httpBase } from './backend.js';
 import { loadConfig, refreshAll, loadSessions, loadFolders, loadWorkspaces, pollHealth } from './api.js';
 import { setToast } from './toast.js';
@@ -13,12 +14,29 @@ import { installGlobalKeybindings } from './keybindings.js';
 
 loadPersisted();
 installGlobalKeybindings();
-// Window/tab title pinned to "CCSM". A MutationObserver guards against
-// Chromium standalone builds that occasionally try to inject the URL
-// into the title bar.
-const expected = 'CCSM';
-function lockTitle() { if (document.title !== expected) document.title = expected; }
-lockTitle();
+// Window/tab title — reactive. In standalone PWA mode we hide our own
+// .page-title-bar and the browser-drawn OS title bar takes its place,
+// so document.title is what the user actually sees as the header. It
+// mirrors what would have been in our hidden header: session title +
+// cwd on the Sessions tab, the page heading elsewhere.
+// MutationObserver guards against Chromium standalone builds that
+// occasionally try to inject the URL into the title bar.
+let desiredTitle = 'CCSM';
+function lockTitle() { if (document.title !== desiredTitle) document.title = desiredTitle; }
+function computeTitle() {
+  const tab = activeTab.value;
+  if (tab === 'sessions') {
+    const id = activeSessionId.value;
+    const s  = id ? sessions.value.find((x) => x.id === id) : null;
+    if (s) {
+      const name = s.title || s.workspace || s.id.slice(0, 12);
+      return `${name} · ${s.cwd} · CCSM`;
+    }
+    return 'Sessions · CCSM';
+  }
+  return `${TAB_HEADINGS[tab]?.title || 'CCSM'} · CCSM`;
+}
+effect(() => { desiredTitle = computeTitle(); lockTitle(); });
 new MutationObserver(lockTitle).observe(
   document.querySelector('title') || document.head,
   { childList: true, subtree: true, characterData: true }
@@ -48,12 +66,23 @@ mq.addEventListener('change', () => { isInstalledPwa.value = mq.matches; });
 // (display-mode: browser) gets it. Used by wco.css to gate user-select
 // on drag regions so chromeless --app= windows can be dragged by
 // clicking the page title, while normal tabs still allow text select.
+//
+// "is-wco" is the stricter case: window-controls-overlay mode where the
+// browser hides its title bar entirely and only floats OS controls in
+// the top-right. In that mode our .page-title-bar IS the title bar and
+// needs the 34px height + padding-right reservation. In plain standalone
+// PWA (browser still paints its own title bar above our content), we
+// don't need any of that — page-title-bar can behave like a regular tab.
 function applyIsAppClass() {
   const isApp = !matchMedia('(display-mode: browser)').matches;
+  const isWco = matchMedia('(display-mode: window-controls-overlay)').matches;
   document.body.classList.toggle('is-app', isApp);
+  document.body.classList.toggle('is-wco', isWco);
 }
 applyIsAppClass();
 matchMedia('(display-mode: browser)').addEventListener('change', applyIsAppClass);
+matchMedia('(display-mode: window-controls-overlay)').addEventListener('change', applyIsAppClass);
+matchMedia('(display-mode: standalone)').addEventListener('change', applyIsAppClass);
 
 // Force-collapse the sidebar on narrow viewports. Mirrors the responsive
 // CSS so JS state (toggle visibility, tree-render gating) agrees with the
@@ -62,6 +91,20 @@ const narrowMq = matchMedia('(max-width: 900px)');
 function applyNarrow() { sidebarForcedCollapsed.value = narrowMq.matches; }
 applyNarrow();
 narrowMq.addEventListener('change', applyNarrow);
+
+// Counter-zoom for chrome bars (page-title-bar, session-actions). Browser
+// page zoom (Ctrl+wheel) scales every CSS px including our header heights;
+// without this, the header gets visually taller at 150%+ which the user
+// usually doesn't want. We detect zoom via outerWidth/innerWidth and write
+// 1/zoom into --anti-zoom so the CSS can `calc(40px * var(--anti-zoom))`
+// each bar back to a constant on-screen height.
+function syncAntiZoom() {
+  const z = window.outerWidth / window.innerWidth || 1;
+  const inv = Math.max(0.4, Math.min(1, 1 / z));   // clamp: never grow > 100%
+  document.documentElement.style.setProperty('--anti-zoom', String(inv));
+}
+syncAntiZoom();
+window.addEventListener('resize', syncAntiZoom);
 
 (async () => {
   // Version-mismatch guard runs FIRST. If the user's backend has been

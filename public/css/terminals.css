@@ -232,6 +232,49 @@
   background: var(--bg-elev);
   overflow: hidden;
 }
+.session-actions {
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 0;
+  height: calc(24px * var(--anti-zoom, 1));
+  min-height: calc(24px * var(--anti-zoom, 1));
+  max-height: calc(24px * var(--anti-zoom, 1));
+  flex-shrink: 0;
+  box-sizing: border-box;
+  padding: 0;
+  background: var(--accent);
+  border-top: 0;
+}
+.session-actions .action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 100%;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.85);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  cursor: pointer;
+  transition: background-color .12s, color .12s;
+}
+.session-actions .action:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.14);
+}
+.session-actions .action.danger:hover {
+  color: #fff;
+  background: rgba(0, 0, 0, 0.22);
+}
+.session-actions .action svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 1.75;
+}
 .session-pane-head {
   display: flex;
   align-items: center;

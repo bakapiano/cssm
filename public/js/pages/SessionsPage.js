@@ -11,7 +11,7 @@ import { setToast } from '../toast.js';
 import { ccsmConfirm, ccsmPrompt } from '../dialog.js';
 import { TerminalView } from '../components/TerminalView.js';
 import { PageTitleBar } from '../components/PageTitleBar.js';
-import { IconPencil, IconClose } from '../icons.js';
+import { IconPencil, IconClose, IconBranch } from '../icons.js';
 import { fmtAgo } from '../util.js';
 
 export function SessionsPage() {
@@ -69,6 +69,7 @@ export function SessionsPage() {
     setResumeError(null);
     setRetryNonce((n) => n + 1);
   };
+  const onFork = () => { setToast('Fork is not wired up yet'); };
 
   return html`
     <${PageTitleBar} title=${html`
@@ -96,6 +97,22 @@ export function SessionsPage() {
                 <div>Resuming session…</div>
               `}
             </div>`}
+      </div>
+      <div class="session-actions">
+        ${/* Fork button — wired but disabled; turn back on once the
+           --fork-session / codex fork / copilot fs-copy integrations
+           are in place. See discussion 2026-05-27. */ ''}
+        ${false ? html`
+          <button class="action subtle" onClick=${onFork} title="Fork session">
+            <${IconBranch} /> Fork
+          </button>
+        ` : null}
+        <button class="action subtle" onClick=${onRename} title="Rename session">
+          <${IconPencil} /> Rename
+        </button>
+        <button class="action subtle danger" onClick=${onDelete} title="Delete session">
+          <${IconClose} /> Delete
+        </button>
       </div>
     </div>`;
 }

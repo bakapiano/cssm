@@ -105,7 +105,11 @@ body.is-resizing-sidebar .app {
   align-items: center;
   justify-content: flex-start;
   gap: var(--s-3);
-  height: 40px;
+  height: calc(40px * var(--anti-zoom, 1));
+  min-height: calc(40px * var(--anti-zoom, 1));
+  max-height: calc(40px * var(--anti-zoom, 1));
+  flex-shrink: 0;
+  box-sizing: border-box;
   margin: 0 calc(-1 * var(--s-4)) 0;
   padding: 0 var(--s-5);
   /* Replace the hard inset shadow rule with a soft gradient fade — gives

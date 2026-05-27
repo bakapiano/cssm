@@ -55,15 +55,6 @@ body.is-app .page-subtitle {
 body.is-app .sidebar { padding-top: 0; }
 body.is-app .main    { padding-top: 0; }
 
-/* Reserve room on the right of page-title-bar so its action buttons don't
-   slide under the floating OS controls. 150px covers Windows controls
-   (~46px each × 3) with breathing room; macOS traffic lights are on the
-   left so this padding is harmless there. WCO override below uses the
-   precise env() value when available. */
-body.is-app .page-title-bar {
-  padding-right: calc(var(--s-4) + 150px);
-}
-
 body.is-app .page-title,
 body.is-app .page-subtitle {
   display: none;
@@ -75,24 +66,69 @@ body.is-app .page-head {
   min-height: 28px;
 }
 
-/* PWA / WCO / --app= mode: shrink the top band to 32px so its mid-line
-   matches the OS-floated close/max/min icons (which sit in a fixed ~32px
-   bar at y=0 and can't be moved). Outside app mode we keep the roomier
-   40px band — see sidebar.css / layout.css. */
-body.is-app .page-title-bar,
-body.is-app .sidebar-top {
-  height: 32px;
-  min-height: 32px;
+/* Standalone PWA (browser still paints its own title bar above our
+   document): suppress our duplicate chrome — the brand mark + collapse
+   row at top-left of the sidebar AND the page-title-bar header — since
+   the OS title bar already shows the app name and serves as the visual
+   header. With sidebar-top hidden, the nav tabs (Sessions/Launch/…)
+   float up to start at the very top of the sidebar column. A 1px
+   border-top across the whole app grid gives the OS title bar something
+   to rest against instead of bleeding straight into our content. */
+body.is-app:not(.is-wco) .sidebar-top {
+  display: none;
 }
-body.is-app .sidebar-brand,
-body.is-app .sidebar-brand-button,
-body.is-app .collapse-toggle {
-  height: 32px;
-  min-height: 32px;
+body.is-app:not(.is-wco) .page-title-bar {
+  display: none;
+}
+body.is-app:not(.is-wco) .app {
+  border-top: 1px solid var(--border);
+}
+/* With page-title-bar hidden, session-pane's `margin-top: calc(-1 *
+   var(--s-4))` — designed to flush it against the (now invisible)
+   title-bar — would otherwise yank the terminal up into the OS title-bar
+   border. Zero the margin AND drop session-pane's `height: 100%` so flex
+   does all the height math; otherwise the height: 100% double-counts and
+   creates dead space at the bottom. */
+body.is-app:not(.is-wco) .session-pane {
+  margin-top: 0;
+  height: auto;
+}
+/* Settings page · with the title-bar hidden in standalone its content
+   would otherwise butt straight against the OS title-bar border. Give
+   it back a little breathing room (Sessions / Launch / About don't
+   need this — they have their own top chrome or flush-to-edge intent). */
+body.is-app:not(.is-wco) [data-panel="configure"] {
+  padding-top: var(--s-4);
+}
+
+/* WCO mode only: the browser has hidden its own title bar and floats OS
+   controls (min/max/close) over our content top-right. Our 34px top band
+   IS the title bar in that case — it gets shrunk to match the OS control
+   strip height, and reserves a right-side padding so action buttons don't
+   slide under those floating controls. 150px covers Windows controls
+   (~46px × 3) with breathing room; the env() override below uses the
+   precise titlebar-area-width when the browser exposes it.
+   In plain standalone PWA (browser still paints its own title bar above
+   our document), none of this applies — our page-title-bar behaves like
+   a normal 40px page header from layout.css. */
+body.is-wco .page-title-bar {
+  padding-right: calc(var(--s-4) + 150px);
+}
+body.is-wco .page-title-bar,
+body.is-wco .sidebar-top {
+  height: calc(34px * var(--anti-zoom, 1));
+  min-height: calc(34px * var(--anti-zoom, 1));
+  max-height: calc(34px * var(--anti-zoom, 1));
+}
+body.is-wco .sidebar-brand,
+body.is-wco .sidebar-brand-button,
+body.is-wco .collapse-toggle {
+  height: 34px;
+  min-height: 34px;
 }
 
 @media (display-mode: window-controls-overlay) {
-  body.is-app .page-title-bar {
+  body.is-wco .page-title-bar {
     padding-right: calc(var(--s-4) + 100vw - env(titlebar-area-width, 100vw));
   }
 }
