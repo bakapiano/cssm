@@ -8,6 +8,7 @@ import { Toast } from './Toast.js';
 import { DialogHost } from './DialogHost.js';
 import { HealthOverlay } from './HealthOverlay.js';
 import { PendingApprovalOverlay } from './PendingApprovalOverlay.js';
+import { RestartOverlay } from './RestartOverlay.js';
 import { MobileNavFab } from './MobileNavFab.js';
 import { isMobile, mobileDrawerOpen } from '../state.js';
 import { SessionsPage } from '../pages/SessionsPage.js';
@@ -65,6 +66,7 @@ export function App() {
       <${Toast} />
       <${DialogHost} />
       <${HealthOverlay} />
+      <${RestartOverlay} />
       <${PendingApprovalOverlay} />
       <${MobileNavFab} />
     </div>`;

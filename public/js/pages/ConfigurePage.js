@@ -6,6 +6,7 @@ import { html } from '../html.js';
 import { useEffect, useState } from 'preact/hooks';
 import {
   config, configDirty, accentColor, folders, workspaces, serverHealth,
+  restartInFlight,
   setAccentColor, ACCENT_DEFAULT,
 } from '../state.js';
 import {
@@ -493,39 +494,55 @@ function VersionField() {
   const latest  = info?.latest;
   const updateAvailable = !!info?.updateAvailable;
 
-  const hint = info?.error
-    ? "Couldn't reach npm registry."
-    : updateAvailable ? `Update available · v${latest}`
-    : latest ? "You're on the latest release."
-    : 'Checks npm registry (cached 30 min).';
-
   return html`
-    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
-      <span class="mono">v${current || '?'}</span>
-      ${updateAvailable ? html`
-        <button class="action primary" disabled=${upgrading} onClick=${onUpgrade}>
-          ${upgrading ? 'Upgrading…' : `Upgrade to v${latest}`}
+    <div class=${`version-card${updateAvailable ? ' has-update' : info?.error ? ' has-error' : ''}`}>
+      <div class="version-card-main">
+        <div class="version-card-current">
+          <span class="version-card-label">Installed</span>
+          <span class="version-card-version">v${current || '?'}</span>
+          ${!updateAvailable && !info?.error && latest ? html`
+            <span class="version-card-badge">Latest</span>
+          ` : null}
+        </div>
+        <div class="version-card-meta">
+          ${info?.error
+            ? html`<span class="version-card-error">Couldn't reach npm registry · <code>${info.error}</code></span>`
+            : updateAvailable
+              ? html`Update available · <span class="mono">v${latest}</span>`
+              : latest
+                ? `You're on the latest release. Checks npm registry (cached 30 min).`
+                : 'Checks npm registry (cached 30 min).'}
+        </div>
+      </div>
+      <div class="version-card-actions">
+        ${updateAvailable ? html`
+          <button class="action primary" disabled=${upgrading} onClick=${onUpgrade}>
+            ${upgrading ? 'Upgrading…' : `Upgrade to v${latest}`}
+          </button>
+        ` : null}
+        <button class="action version-card-check" disabled=${checking || upgrading} onClick=${() => refresh(true)}>
+          <${IconRefresh} /> ${checking ? 'Checking…' : 'Check now'}
         </button>
-      ` : null}
-      <button class="action" disabled=${checking || upgrading} onClick=${() => refresh(true)}>
-        ${checking ? 'Checking…' : 'Check for updates'}
-      </button>
-      <span class="hint">${hint}</span>
+      </div>
     </div>
   `;
 }
 
 function RestartButton() {
-  const [busy, setBusy] = useState(false);
   const onClick = async () => {
     const ok = await ccsmConfirm(
       'Restart the ccsm backend? Active sessions will be killed and reattached on next launch.',
       { okLabel: 'Restart', danger: true });
     if (!ok) return;
-    setBusy(true);
+    // Drop the fullscreen RestartOverlay BEFORE firing /api/restart —
+    // the request itself takes ~0ms (response is "ok, restarting") but
+    // the server then begins tearing PTYs down. If we wait for the
+    // response before opening the overlay, the user gets a frozen
+    // button + half-a-second of confusion.
+    const prevPid = serverHealth.value.pid || null;
+    restartInFlight.value = { startedAt: Date.now(), prevPid };
     try {
       const r = await restartBackend();
-      setToast('restarting backend…');
       if (r?.closeFrontend) {
         // Backend respawn will pop a fresh browser window — close this
         // one so the user isn't stuck on the OfflineBanner during the
@@ -534,17 +551,18 @@ function RestartButton() {
         // which is the right behavior for them.
         setTimeout(() => { try { window.close(); } catch {} }, 400);
       }
+      // RestartOverlay self-dismisses once /api/health reports a fresh
+      // pid, so no further work here. If the new backend never comes
+      // back, the overlay has its own 30s safety timeout + OfflineBanner
+      // takes over.
     } catch (e) {
-      setBusy(false);
+      restartInFlight.value = null;
       setToast(e.message, 'error');
     }
   };
   return html`
-    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
-      <button class="action" disabled=${busy} onClick=${onClick}>
-        ${busy ? 'Restarting…' : 'Restart backend'}
-      </button>
-      <span class="hint">Stops the server, then spawns a fresh one on the same port.</span>
+    <div class="restart-button-wrap">
+      <button class="action" onClick=${onClick}>Restart backend</button>
     </div>
   `;
 }

@@ -66,7 +66,7 @@ app.use((req, res, next) => {
   if (origin && ALLOWED_ORIGINS.has(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Device-Id');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Device-Id, X-Device-Code');
     res.setHeader('Vary', 'Origin');
   }
   if (req.method === 'OPTIONS') return res.sendStatus(204);
@@ -123,6 +123,7 @@ async function deviceGate(req, res, next) {
   try { await devices.record(id, {
     userAgent: req.headers['user-agent'] || '',
     ip: String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim(),
+    code: req.headers['x-device-code'] || '',
   }); } catch { /* lastSeen bump is best-effort */ }
   if (d.status === 'approved') return next();
   return res.status(403).json({
@@ -1071,6 +1072,26 @@ app.post('/api/tunnel/install', asyncH(async (req, res) => {
     res.status(400).json({ error: e.message });
   }
 }));
+// Interactive `devtunnel user login -d` driver. The Remote page POSTs
+// here to start a device-code flow, then polls /api/tunnel/status to
+// learn the URL+code it should display and the eventual outcome —
+// avoids the older "copy this command into a shell" UX.
+app.post('/api/tunnel/devtunnel/login', asyncH(async (req, res) => {
+  const { mode } = req.body || {};
+  try {
+    const snap = await tunnel.startDevtunnelLogin({ mode });
+    res.json({ ok: true, login: snap });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+}));
+app.post('/api/tunnel/devtunnel/login/cancel', asyncH(async (_req, res) => {
+  res.json({ ok: true, login: tunnel.cancelDevtunnelLogin() });
+}));
+app.post('/api/tunnel/devtunnel/login/dismiss', asyncH(async (_req, res) => {
+  tunnel.clearDevtunnelLogin();
+  res.json({ ok: true });
+}));
 
 // ---- devices ----
 //
@@ -1099,7 +1120,8 @@ app.get('/api/devices/me', asyncH(async (req, res) => {
   }
   const ua = req.headers['user-agent'] || '';
   const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
-  const d = await devices.record(id, { userAgent: ua, ip });
+  const code = String(req.headers['x-device-code'] || (req.query && req.query.code) || '').slice(0, 8);
+  const d = await devices.record(id, { userAgent: ua, ip, code });
   res.json(d);
 }));
 app.get('/api/devices', asyncH(async (_req, res) => {

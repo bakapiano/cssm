@@ -358,10 +358,10 @@ export function Sidebar() {
 
       <nav class="sidebar-nav compact" role="tablist" aria-label="Sections">
         <${NavItem} tab="launch"    icon=${html`<${IconLaunch} />`}    label="New Session" />
-        <${NavItem} tab="configure" icon=${html`<${IconConfigure} />`} label="Settings" dirty=${configDirty.value} />
         ${!isRemoteAccess() ? html`
           <${NavItem} tab="remote"  icon=${html`<${IconRemote} />`}    label="Remote" />
         ` : null}
+        <${NavItem} tab="configure" icon=${html`<${IconConfigure} />`} label="Settings" dirty=${configDirty.value} />
       </nav>
 
       ${!collapsed ? html`<${SessionTree} />` : null}

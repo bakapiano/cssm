@@ -3,7 +3,7 @@
 
 import { signal } from '@preact/signals';
 import * as S from './state.js';
-import { httpBase, getToken, getDeviceId, isRemoteAccess } from './backend.js';
+import { httpBase, getToken, getDeviceId, getDeviceCode, isRemoteAccess } from './backend.js';
 
 // Global pending-approval signal. Flipped to true whenever any /api
 // call returns 403 {pending:true}; PendingApprovalOverlay watches this
@@ -26,6 +26,12 @@ export async function api(method, url, body) {
   // for any tunnel-served page to clear the device-approval gate.
   const dev = getDeviceId();
   if (dev) opts.headers['X-Device-Id'] = dev;
+  // 4-digit identification code (see getDeviceCode in backend.js).
+  // Server stores it on first sight; the Remote page renders it
+  // alongside each pending device so the operator can confirm "yes,
+  // this is the request I just made on my phone" before approving.
+  const code = getDeviceCode();
+  if (code) opts.headers['X-Device-Code'] = code;
   if (body !== undefined) opts.body = JSON.stringify(body);
   const r = await fetch(httpBase() + url, opts);
   const text = await r.text();
@@ -37,14 +43,24 @@ export async function api(method, url, body) {
     // checks.
     if (isRemoteAccess()) {
       if (r.status === 403 && json && (json.pending || json.rejected)) {
-        pendingDevice.value = { ...json, at: Date.now() };
+        // Merge into the existing pendingDevice rather than overwriting
+        // so the "we recorded you at HH:MM" detail (only present on the
+        // initial /me hit, not subsequent gate 403s) survives. Without
+        // this merge, the first failing /api/sessions tick after the
+        // overlay mounts wipes the firstSeen timestamp and the copy
+        // reverts to a generic "The host machine got your request".
+        const prev = pendingDevice.value || {};
+        pendingDevice.value = { ...prev, ...json, at: Date.now() };
       } else if (r.status === 401) {
         // Server doesn't recognise our device — either fresh page load
-        // (no /api/devices/me hit yet) or our record got deleted /
-        // pruned. Drop into the pending overlay; its /me poll will
-        // re-register us using the token we still have in localStorage,
-        // and the response sets pendingDevice to the correct state.
-        pendingDevice.value = { pending: true, at: Date.now() };
+        // (no /api/devices/me hit yet) or our record got pruned (24h
+        // pending TTL) AND our token no longer matches the host's
+        // current one. PendingApprovalOverlay's /me poll will try to
+        // re-register; on token mismatch /me itself 401s and the
+        // overlay flips into "token expired" state. We just nudge the
+        // overlay alive here.
+        const prev = pendingDevice.value || {};
+        pendingDevice.value = { ...prev, pending: true, at: Date.now() };
       }
     }
     throw new Error(json.error || `HTTP ${r.status}`);

@@ -13,7 +13,7 @@ import { api } from '../api.js';
 import { PageTitleBar } from '../components/PageTitleBar.js';
 import { setToast } from '../toast.js';
 import { ccsmConfirm, ccsmPrompt } from '../dialog.js';
-import { IconCopy, IconRecycle, IconExternal, IconInfo, IconPencil, IconClose } from '../icons.js';
+import { IconCopy, IconRecycle, IconExternal, IconInfo, IconPencil, IconClose, IconCloudflareColor, IconMicrosoftColor } from '../icons.js';
 import { fmtAgo } from '../util.js';
 import { clockTick } from '../state.js';
 
@@ -61,7 +61,8 @@ function DeviceRow({ d, kind, onApprove, onReject, onRevoke, onRename, onDelete 
     <div class=${`remote-device is-${kind}`}>
       <div class="remote-device-main">
         <div class="remote-device-label">
-          ${d.label || 'Unknown device'}
+          ${d.code ? html`<code class="remote-device-code" title="Match this with the code shown on the requesting device">${d.code}</code>` : null}
+          <span class="remote-device-name">${d.label || 'Unknown device'}</span>
           ${kind === 'approved' ? html`
             <button class="icon-btn" title="Rename" onClick=${onRename}><${IconPencil} /></button>
           ` : null}
@@ -88,33 +89,174 @@ function DeviceRow({ d, kind, onApprove, onReject, onRevoke, onRename, onDelete 
     </div>`;
 }
 
-function ProviderChip({ id, label, selected, onSelect }) {
+function ProviderTile({ id, label, hint, icon, selected, disabled, onSelect }) {
   return html`
-    <label class=${`chip${selected ? ' checked' : ''}`}>
-      <input type="radio" name="provider" value=${id} checked=${selected}
-             onChange=${() => onSelect(id)} />
-      ${label}
-    </label>`;
+    <button type="button"
+            class=${`provider-tile${selected ? ' is-selected' : ''}${disabled ? ' is-disabled' : ''}`}
+            aria-pressed=${selected ? 'true' : 'false'}
+            disabled=${disabled}
+            onClick=${() => !disabled && onSelect(id)}>
+      <span class="provider-tile-icon">${icon}</span>
+      <span class="provider-tile-body">
+        <span class="provider-tile-label">${label}</span>
+        ${hint ? html`<span class="provider-tile-hint">${hint}</span>` : null}
+      </span>
+    </button>`;
 }
 
-function ProviderStatus({ id, info, onInstall, onLogin }) {
-  if (!info) return html`<span class="muted">probing…</span>`;
+function ProviderStatus({ id, info, onInstall, onLogin, loggingIn }) {
+  if (!info) return html`<span class="provider-status-muted">probing…</span>`;
   if (!info.installed) {
     return html`
-      <span class="warn">not installed</span>
-      <button type="button" class="action subtle small" onClick=${onInstall}>
-        Install via winget
-      </button>`;
+      <div class="provider-status">
+        <span class="provider-status-state is-warn">
+          <span class="provider-status-dot is-warn"></span> Not installed
+        </span>
+        <button type="button" class="action small" onClick=${onInstall}>
+          Install via winget
+        </button>
+      </div>`;
   }
-  const tag = id === 'devtunnel'
-    ? (info.loggedIn ? html`signed in as <code>${info.user}</code>` : html`<span class="warn">not signed in</span>`)
-    : html`anonymous`;
+  if (id !== 'devtunnel') {
+    // Cloudflare quick tunnel · no account state, just version.
+    return html`
+      <div class="provider-status">
+        <span class="provider-status-state is-ok">
+          <span class="provider-status-dot is-ok"></span> Ready · anonymous
+        </span>
+        ${info.version ? html`<span class="provider-status-version">${info.version}</span>` : null}
+      </div>`;
+  }
+  // devtunnel · signed-in / signed-out states each get their own row.
+  if (!info.loggedIn) {
+    // While a sign-in flow is in flight the signin-card below this
+    // row carries its own header + spinner + cancel button. Showing
+    // a second "Signing in…" CTA here is just noise — collapse the
+    // whole signed-out block down to a thin status line until the
+    // card resolves one way or the other.
+    if (loggingIn) {
+      return html`
+        <div class="provider-status">
+          <span class="provider-status-state">
+            <span class="provider-status-dot"></span> Signing in…
+          </span>
+          ${info.version ? html`<span class="provider-status-version">${info.version}</span>` : null}
+        </div>`;
+    }
+    return html`
+      <div class="provider-status">
+        <span class="provider-status-state is-warn">
+          <span class="provider-status-dot is-warn"></span> Not signed in
+        </span>
+        ${info.version ? html`<span class="provider-status-version">${info.version}</span>` : null}
+        <button type="button" class="btn-signin-microsoft provider-status-signin" onClick=${onLogin}>
+          <${IconMicrosoftColor} size=${18} />
+          <span>Sign in with Microsoft</span>
+        </button>
+      </div>`;
+  }
   return html`
-    <span>${tag}</span>
-    ${info.version ? html` · <span class="mono small-mono">${info.version}</span>` : null}
-    ${id === 'devtunnel' && !info.loggedIn ? html`
-      <button type="button" class="action subtle small" onClick=${onLogin}>How to sign in</button>
-    ` : null}`;
+    <div class="provider-status">
+      <span class="provider-status-state is-ok">
+        <span class="provider-status-dot is-ok"></span> Signed in
+      </span>
+      <span class="provider-status-user">${info.user}</span>
+      ${info.version ? html`<span class="provider-status-version">${info.version}</span>` : null}
+      <button type="button" class="action subtle small provider-status-switch" onClick=${onLogin}>
+        Switch
+      </button>
+    </div>`;
+}
+
+// Device-code login panel. Shown when a `devtunnel user login -d` flow
+// is in flight or just finished. The user clicks Open, signs in on
+// microsoft.com, and we flip to "Signed in" automatically when the
+// child exits 0 (the probe cache gets invalidated on exit).
+function DevtunnelLoginPanel({ login, onCancel, onDismiss, onRetry }) {
+  if (!login) return null;
+  const { status, url, code, error, user, lines } = login;
+  const running  = status === 'running';
+  const done     = status === 'done';
+  const failed   = status === 'error';
+  const canceled = status === 'canceled';
+  const host = (() => { try { return new URL(url).host; } catch { return url || ''; } })();
+  return html`
+    <div class=${`signin-card is-${status}`}>
+      ${running ? html`
+        <div class="signin-card-header">
+          <span class="signin-card-spinner" aria-hidden="true"></span>
+          <span class="signin-card-eyebrow">Signing in to Microsoft</span>
+          <button type="button" class="signin-card-cancel" onClick=${onCancel} title="Cancel sign-in">
+            <${IconClose} /> Cancel
+          </button>
+        </div>
+        <div class="signin-card-code-block">
+          <span class="signin-card-code-label">Device code</span>
+          <div class="signin-card-code-row">
+            ${code ? html`
+              <code class="signin-card-code">${code}</code>
+              <button type="button" class="action subtle small signin-card-code-copy"
+                      title="Copy code" onClick=${() => copy(code)}>
+                <${IconCopy} />
+              </button>
+            ` : html`<span class="signin-card-code-pending">generating…</span>`}
+          </div>
+        </div>
+        <ol class="signin-card-steps">
+          <li>
+            ${url ? html`
+              <a class="signin-card-open" href=${url} target="_blank" rel="noreferrer noopener">
+                <${IconExternal} /> Open <span class="signin-card-host">${host}</span>
+              </a>
+            ` : html`<span class="signin-card-step-muted">Waiting for sign-in URL…</span>`}
+          </li>
+          <li>Paste the device code shown above.</li>
+          <li>Pick an account and approve — this page flips automatically.</li>
+        </ol>
+      ` : null}
+      ${done ? html`
+        <div class="signin-card-result is-ok">
+          <span class="signin-card-result-icon" aria-hidden="true">✓</span>
+          <div class="signin-card-result-body">
+            <div class="signin-card-result-title">Signed in</div>
+            <div class="signin-card-result-meta">
+              ${user ? html`as <code>${user}</code> · ` : ''}you can start the tunnel now.
+            </div>
+          </div>
+          <button type="button" class="action subtle small" onClick=${onDismiss}>Dismiss</button>
+        </div>
+      ` : null}
+      ${failed ? html`
+        <div class="signin-card-result is-error">
+          <span class="signin-card-result-icon" aria-hidden="true">!</span>
+          <div class="signin-card-result-body">
+            <div class="signin-card-result-title">Sign-in failed</div>
+            <div class="signin-card-result-meta">${error || 'devtunnel exited with an error.'}</div>
+          </div>
+          <div class="signin-card-result-actions">
+            <button type="button" class="action small" onClick=${onRetry}>Try again</button>
+            <button type="button" class="action subtle small" onClick=${onDismiss}>Dismiss</button>
+          </div>
+        </div>
+      ` : null}
+      ${canceled ? html`
+        <div class="signin-card-result is-muted">
+          <div class="signin-card-result-body">
+            <div class="signin-card-result-title">Sign-in canceled</div>
+          </div>
+          <div class="signin-card-result-actions">
+            <button type="button" class="action small" onClick=${onRetry}>Try again</button>
+            <button type="button" class="action subtle small" onClick=${onDismiss}>Dismiss</button>
+          </div>
+        </div>
+      ` : null}
+      ${lines && lines.length ? html`
+        <details class="signin-card-log">
+          <summary>CLI output · ${lines.length} ${lines.length === 1 ? 'line' : 'lines'}</summary>
+          <pre>${lines.join('\n')}</pre>
+        </details>
+      ` : null}
+    </div>`;
 }
 
 export function RemotePage() {
@@ -124,12 +266,6 @@ export function RemotePage() {
   const [token, setTokenLocal] = useState('');
   const [busy, setBusy] = useState(false);
   const [deviceList, setDeviceList] = useState([]);
-  // First /api/tunnel/status round-trip is the slow one — even with
-  // 30s server-side cache + parallel probe, a cold call shells out to
-  // where.exe / --version / `devtunnel user show` and adds ~700ms.
-  // We hide the form behind a spinner during that window so the user
-  // doesn't see empty radios + placeholders that suddenly fill in.
-  const [loading, setLoading] = useState(true);
   const pollRef = useRef(null);
 
   async function refresh() {
@@ -149,7 +285,6 @@ export function RemotePage() {
         return cur || 'cloudflared';
       });
     } catch (e) { setToast(`status load failed · ${e.message}`, 'error'); }
-    finally { setLoading(false); }
   }
 
   useEffect(() => {
@@ -191,13 +326,19 @@ export function RemotePage() {
   }
 
   async function onStart() {
-    if (!token || token.length < 8) {
-      setToast('Token must be at least 8 characters', 'error');
-      return;
-    }
     setBusy(true);
     try {
-      const s = await api('POST', '/api/tunnel/start', { provider, token });
+      // Auto-mint a token if the user hasn't generated one yet — the
+      // registration token is now an implementation detail of starting
+      // a tunnel rather than a separate setup step.
+      let tok = token;
+      if (!tok || tok.length < 8) {
+        tok = genToken();
+        setTokenLocal(tok);
+        try { await api('POST', '/api/tunnel/token', { token: tok }); }
+        catch (e) { /* the start call below will fail too — surface that */ }
+      }
+      const s = await api('POST', '/api/tunnel/start', { provider, token: tok });
       setStatus(s);
       setToast(s.url ? 'Tunnel up' : 'Tunnel starting · URL appearing shortly', 'ok');
     } catch (e) {
@@ -239,10 +380,25 @@ export function RemotePage() {
     } catch (e) { setToast(`install failed · ${e.message}`, 'error'); }
   }
   function onLogin(p) {
-    if (p === 'devtunnel') {
-      copy('devtunnel user login');
-      setToast('Command copied · paste in a terminal to sign in', 'ok');
-    }
+    if (p !== 'devtunnel') return;
+    // Kick off `devtunnel user login -d` on the host and let the
+    // panel below render the device code + URL. /status polling
+    // (every 2.5s) picks up the eventual outcome.
+    (async () => {
+      try {
+        const r = await api('POST', '/api/tunnel/devtunnel/login', { mode: 'microsoft' });
+        if (r?.login) setStatus((cur) => cur ? { ...cur, login: r.login } : cur);
+        refresh();
+      } catch (e) { setToast(`sign-in failed · ${e.message}`, 'error'); }
+    })();
+  }
+  async function onLoginCancel() {
+    try { await api('POST', '/api/tunnel/devtunnel/login/cancel'); refresh(); }
+    catch (e) { setToast(`cancel failed · ${e.message}`, 'error'); }
+  }
+  async function onLoginDismiss() {
+    try { await api('POST', '/api/tunnel/devtunnel/login/dismiss'); refresh(); }
+    catch (e) { setToast(`dismiss failed · ${e.message}`, 'error'); }
   }
 
   const running = status?.running;
@@ -251,17 +407,13 @@ export function RemotePage() {
   const log     = status?.log || [];
   const cf      = status?.providers?.cloudflared;
   const dt      = status?.providers?.devtunnel;
-
-  if (loading) {
-    return html`
-      <${PageTitleBar} title="Remote" />
-      <div class="settings-scroll">
-        <div class="remote-loading">
-          <div class="remote-loading-spinner" aria-hidden="true"></div>
-          <p>Probing tunnel providers…</p>
-        </div>
-      </div>`;
-  }
+  const dtLogin = status?.login || null;
+  const dtLoggingIn = dtLogin?.status === 'running';
+  // First /api/tunnel/status round-trip is the slow one — even with
+  // the 30s server-side cache + parallel probe, a cold call shells
+  // out and adds ~700ms. We render the full page immediately and let
+  // individual fields show their own "probing…" state instead of
+  // gating the whole panel behind a centered spinner.
 
   return html`
     <${PageTitleBar} title="Remote" />
@@ -269,49 +421,142 @@ export function RemotePage() {
 
       <${Section}
         title="Connection"
-        meta=${html`Pick the tunnel CLI ccsm should spawn. Loopback callers on this machine bypass the token automatically.`}>
+        meta=${html`Pick which CLI ccsm spawns for the tunnel.`}>
         <div class="config-grid">
           <div class="field">
             <span class="label">Provider</span>
-            <div class="chip-row">
-              <${ProviderChip} id="cloudflared" label="Cloudflare Tunnel"
-                selected=${provider === 'cloudflared'} onSelect=${setProvider} />
-              <${ProviderChip} id="devtunnel" label="Microsoft Dev Tunnel"
-                selected=${provider === 'devtunnel'} onSelect=${setProvider} />
+            <div class="provider-tile-row">
+              <${ProviderTile} id="cloudflared" label="Cloudflare Tunnel"
+                hint="Anonymous · no login"
+                icon=${html`<${IconCloudflareColor} size=${32} />`}
+                selected=${provider === 'cloudflared'}
+                disabled=${running}
+                onSelect=${setProvider} />
+              <${ProviderTile} id="devtunnel" label="Microsoft Dev Tunnel"
+                hint="Requires sign-in"
+                icon=${html`<${IconMicrosoftColor} size=${32} />`}
+                selected=${provider === 'devtunnel'}
+                disabled=${running}
+                onSelect=${setProvider} />
             </div>
+            ${running ? html`<span class="hint">Stop the tunnel to switch provider.</span>` : null}
           </div>
-          <div class="field">
-            <span class="label">Cloudflare Tunnel</span>
-            <div class="remote-status-line">
-              <${ProviderStatus} id="cloudflared" info=${cf}
-                onInstall=${() => onInstall('cloudflared')} />
+          ${provider === 'cloudflared' ? html`
+            <div class="field">
+              <span class="label">Cloudflare Tunnel</span>
+              <div class="remote-status-line">
+                <${ProviderStatus} id="cloudflared" info=${cf}
+                  onInstall=${() => onInstall('cloudflared')} />
+              </div>
             </div>
-          </div>
-          <div class="field">
-            <span class="label">Microsoft Dev Tunnel</span>
-            <div class="remote-status-line">
-              <${ProviderStatus} id="devtunnel" info=${dt}
-                onInstall=${() => onInstall('devtunnel')}
-                onLogin=${() => onLogin('devtunnel')} />
+          ` : null}
+          ${provider === 'devtunnel' ? html`
+            <div class="field">
+              <span class="label">Microsoft Dev Tunnel</span>
+              <div class="remote-status-line">
+                <${ProviderStatus} id="devtunnel" info=${dt}
+                  onInstall=${() => onInstall('devtunnel')}
+                  onLogin=${() => onLogin('devtunnel')}
+                  loggingIn=${dtLoggingIn} />
+              </div>
+              ${dtLogin ? html`
+                <${DevtunnelLoginPanel}
+                  login=${dtLogin}
+                  onCancel=${onLoginCancel}
+                  onDismiss=${onLoginDismiss}
+                  onRetry=${() => onLogin('devtunnel')} />
+              ` : null}
             </div>
-          </div>
+          ` : null}
         </div>
       </${Section}>
 
       <${Section}
+        title="Tunnel"
+        meta=${running
+          ? html`Provider <code>${status?.provider}</code> · started ${new Date(status.startedAt).toLocaleTimeString()}`
+          : html`Not running.`}>
+        ${!running ? html`
+          <div class="tunnel-hero">
+            <div class="tunnel-hero-body">
+              <div class="tunnel-hero-title">Bring this backend online</div>
+              <div class="tunnel-hero-meta">
+                ccsm will spawn
+                <code>${provider === 'devtunnel' ? 'devtunnel' : 'cloudflared'}</code>
+                and wait for it to print a public URL.
+              </div>
+            </div>
+            <button type="button" class="action tunnel-hero-cta"
+                    disabled=${busy}
+                    onClick=${onStart}>
+              <${IconExternal} /> ${busy ? 'Starting…' : 'Start tunnel'}
+            </button>
+          </div>
+        ` : html`
+          <div class="tunnel-live">
+            <div class="tunnel-live-head">
+              <span class="tunnel-live-state">
+                <span class="tunnel-live-dot"></span>
+                Live
+              </span>
+              <span class="tunnel-live-divider">·</span>
+              <span class="tunnel-live-provider">${status?.provider === 'devtunnel' ? 'Microsoft Dev Tunnel' : 'Cloudflare Tunnel'}</span>
+              <span class="tunnel-live-divider">·</span>
+              <span class="tunnel-live-meta">since ${new Date(status.startedAt).toLocaleTimeString()}</span>
+              <button type="button" class="tunnel-stop-link"
+                      disabled=${busy}
+                      onClick=${onStop}>
+                <${IconClose} /> ${busy ? 'Stopping…' : 'Stop tunnel'}
+              </button>
+            </div>
+            ${url ? html`
+              <div class="tunnel-share">
+                <div class="tunnel-share-label">Share URL</div>
+                <div class="tunnel-share-url">
+                  <code class="tunnel-share-value">${share}</code>
+                  <div class="tunnel-share-actions">
+                    <button type="button" class="action small" onClick=${() => copy(share)}>
+                      <${IconCopy} /> Copy
+                    </button>
+                    <a class="action small" href=${share} target="_blank" rel="noreferrer noopener">
+                      <${IconExternal} /> Open
+                    </a>
+                  </div>
+                </div>
+                <div class="tunnel-share-hint">
+                  Send this to the remote device · token embedded, stripped from the URL on first arrival.
+                </div>
+              </div>
+            ` : html`
+              <div class="tunnel-share is-waiting">
+                <div class="signin-card-spinner" aria-hidden="true"></div>
+                <span>Waiting for the CLI to print a public URL…</span>
+              </div>
+            `}
+            ${log.length ? html`
+              <details class="remote-log tunnel-log">
+                <summary>CLI log · ${log.length} lines</summary>
+                <pre>${log.join('\n')}</pre>
+              </details>
+            ` : null}
+          </div>
+        `}
+      </${Section}>
+
+      <${Section}
         title="Registration token"
-        meta=${html`Embedded in the share URL. Only needed to <em>register</em> a new device for approval — once you approve a device, it keeps working even if you rotate the token.`}>
+        meta=${html`Auto-generated. Only used to register new devices — approved devices keep working after a rotate.`}>
         <div class="config-grid">
           <div class="field">
             <span class="label">Token</span>
             <div class="remote-token-row">
               <input type="text" class="input remote-token-input"
                      readonly
-                     placeholder="click Generate to create a token"
+                     placeholder="auto-generated on first Start tunnel"
                      value=${token} />
-              <button type="button" class="action" title="Generate a new token and save it"
+              <button type="button" class="action" title="Mint a fresh token (invalidates outstanding share URLs)"
                       onClick=${onGenerateToken}>
-                <${IconRecycle} /> Generate
+                <${IconRecycle} /> ${token ? 'Rotate' : 'Generate'}
               </button>
               <button type="button" class="action"
                       disabled=${!token}
@@ -321,7 +566,7 @@ export function RemotePage() {
             </div>
             <span class="hint">
               ${(!status?.token && !token)
-                ? html`<span class="warn">No token set · new devices can't register.</span>`
+                ? html`No token yet — one is minted automatically the first time you start a tunnel.`
                 : html`Active. Rotating it invalidates outstanding share URLs but doesn't kick out devices you've already approved.`}
             </span>
           </div>
@@ -329,64 +574,8 @@ export function RemotePage() {
       </${Section}>
 
       <${Section}
-        title="Tunnel"
-        meta=${running
-          ? html`Provider <code>${status?.provider}</code> · started ${new Date(status.startedAt).toLocaleTimeString()}`
-          : html`Not running.`}>
-        <div class="config-grid">
-          <div class="field">
-            <span class="label">State</span>
-            <div>
-              ${!running ? html`
-                <button type="button" class="action primary"
-                        disabled=${busy || !token || token.length < 8}
-                        onClick=${onStart}>
-                  Start tunnel
-                </button>
-              ` : html`
-                <button type="button" class="action danger"
-                        disabled=${busy}
-                        onClick=${onStop}>
-                  Stop tunnel
-                </button>
-              `}
-              ${running && !url ? html`<span class="hint inline">Waiting for URL…</span>` : null}
-            </div>
-          </div>
-
-          ${running && url ? html`
-            <div class="field">
-              <span class="label">Share URL</span>
-              <div class="remote-url-line">
-                <code class="remote-url-value">${share}</code>
-                <button type="button" class="action" onClick=${() => copy(share)}>
-                  <${IconCopy} /> Copy
-                </button>
-                <a class="action" href=${share} target="_blank" rel="noreferrer noopener">
-                  <${IconExternal} /> Open
-                </a>
-              </div>
-              <span class="hint">
-                Send this to the remote device · token embedded, stripped from the URL on first arrival.
-              </span>
-            </div>
-          ` : null}
-
-          ${log.length ? html`
-            <div class="field">
-              <span class="label">CLI log</span>
-              <details class="remote-log">
-                <summary>${log.length} lines</summary>
-                <pre>${log.join('\n')}</pre>
-              </details>
-            </div>
-          ` : null}
-        </div>
-      </${Section}>
-
-      <${Section}
         title="Devices"
-        meta=${html`Browsers that loaded the share URL. Approve once per device — token alone is not enough.`}>
+        meta=${html`Approve each new device once.`}>
         ${(() => {
           const pending  = deviceList.filter((d) => d.status === 'pending');
           const approved = deviceList.filter((d) => d.status === 'approved');
@@ -435,29 +624,6 @@ export function RemotePage() {
               ` : null}
             </div>`;
         })()}
-      </${Section}>
-
-      <${Section} title="How access works" meta="What the token does, what an approved device gets, and how to lock things back down.">
-        <dl class="remote-facts">
-          <div class="remote-fact">
-            <dt>The token is just a knock</dt>
-            <dd>
-              The share URL embeds the token and the remote browser uses it once — only to register itself in the <strong>Pending</strong> list. After that the URL + token grant nothing on their own. Until you click <strong>Approve</strong>, the visitor's <code>/api/*</code> calls all return 403.
-            </dd>
-          </div>
-          <div class="remote-fact">
-            <dt>Approved devices are sticky</dt>
-            <dd>
-              Once approved, the device's per-browser UUID becomes the credential — every API + WebSocket call rides on that alone. <strong>Rotating the token doesn't kick them out</strong>; that only blocks new arrivals. To lock an existing device out, hit <strong>Revoke</strong> in the Devices list above.
-            </dd>
-          </div>
-          <div class="remote-fact">
-            <dt>This machine is exempt</dt>
-            <dd>
-              Loopback callers (<code>localhost</code>, <code>127.0.0.1</code>) skip both checks — your own browser on this host needs nothing. Tunnel traffic is distinguished by the <code>X-Forwarded-*</code> headers the proxies inject, so it can't masquerade as local.
-            </dd>
-          </div>
-        </dl>
       </${Section}>
 
     </div>`;

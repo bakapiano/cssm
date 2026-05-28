@@ -120,6 +120,14 @@
    pointers; touch never matches :hover. */
 .mobile-nav-fab:hover  { background: var(--bg); }
 .mobile-nav-fab:active { cursor: grabbing; }
+/* Suppress the browser's default focus ring + tap highlight — on touch
+   the ring lingers after every tap and reads as a stuck "selected"
+   state on the FAB. We're not removing all affordance: the icon swap
+   (hamburger ↔ X) + the is-open border change still communicate state.
+   :focus-visible is also dropped here since the FAB is touch-first. */
+.mobile-nav-fab:focus,
+.mobile-nav-fab:focus-visible { outline: none; }
+.mobile-nav-fab { -webkit-tap-highlight-color: transparent; }
 .mobile-nav-fab svg { width: 22px; height: 22px; stroke-width: 2; pointer-events: none; }
 /* Open state stays the same paper white — only the icon swaps to X.
    Keeping the colour consistent reads as "same button, different
@@ -127,7 +135,7 @@
 .mobile-nav-fab.is-open {
   background: var(--bg-elev);
   color: var(--ink);
-  border-color: var(--ink);
+  border-color: var(--border-strong);
 }
 
 .mobile-nav-backdrop {

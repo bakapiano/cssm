@@ -14,7 +14,8 @@ export const IconSessions = ic('0 0 24 24', html`
 `, 18);
 
 export const IconLaunch = ic('0 0 24 24', html`
-  <path d="M7 17L17 7"/><path d="M9 7h8v8"/>
+  <path d="M19 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h6"/>
+  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
 `, 18);
 
 export const IconConfigure = ic('0 0 24 24', html`
@@ -135,11 +136,11 @@ export const IconMoreVert = ic('0 0 24 24', html`
 // Remote nav tab; reads as "this machine is broadcasting" / "remote
 // access available".
 export const IconRemote = ic('0 0 24 24', html`
-  <circle cx="12" cy="12" r="2"/>
-  <path d="M8.5 8.5a5 5 0 0 0 0 7"/>
-  <path d="M15.5 8.5a5 5 0 0 1 0 7"/>
-  <path d="M5.5 5.5a9 9 0 0 0 0 13"/>
-  <path d="M18.5 5.5a9 9 0 0 1 0 13"/>
+  <circle cx="18" cy="5" r="2.5"/>
+  <circle cx="6" cy="12" r="2.5"/>
+  <circle cx="18" cy="19" r="2.5"/>
+  <line x1="8.2" y1="10.8" x2="15.8" y2="6.2"/>
+  <line x1="8.2" y1="13.2" x2="15.8" y2="17.8"/>
 `, 18);
 
 // Copy — two stacked rectangles. For "copy to clipboard" affordance
@@ -163,6 +164,10 @@ export const IconCodexColor = () => html`
   <img src="./assets/codex-color.svg" alt="" width="18" height="18" style="display:block" />`;
 export const IconCopilotColor = () => html`
   <img src="./assets/copilot-color.svg" alt="" width="18" height="18" style="display:block" />`;
+export const IconCloudflareColor = ({ size = 28 } = {}) => html`
+  <img src="./assets/cloudflare-color.svg" alt="" width=${size} height=${size} style="display:block" />`;
+export const IconMicrosoftColor = ({ size = 28 } = {}) => html`
+  <img src="./assets/microsoft-color.svg" alt="" width=${size} height=${size} style="display:block" />`;
 
 // Pick the right icon for a CLI based on its type field.
 export const IconForCliType = (type) => {

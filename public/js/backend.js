@@ -82,3 +82,29 @@ export function getDeviceId() {
     return null;
   }
 }
+
+// Per-device 4-digit human-verification code. Sent alongside the
+// device id so the operator approving on the host can match what
+// they see in the Remote page against what the requesting user
+// reads off their own screen — guards against approving the wrong
+// pending request when two devices arrive in quick succession.
+// Purely identification, NOT a credential — no secrecy assumed.
+const LS_DEVICE_CODE = 'ccsm.deviceCode';
+
+export function getDeviceCode() {
+  try {
+    let c = localStorage.getItem(LS_DEVICE_CODE);
+    if (!c || !/^\d{4}$/.test(c)) {
+      // 1000..9999 inclusive so the leading digit is never 0 — keeps
+      // the code visually consistent at 4 characters wherever it
+      // shows up. Random.value covers 9000 possibilities, plenty for
+      // a "which of these is yours" disambiguator.
+      const n = 1000 + Math.floor(Math.random() * 9000);
+      c = String(n);
+      localStorage.setItem(LS_DEVICE_CODE, c);
+    }
+    return c;
+  } catch {
+    return null;
+  }
+}

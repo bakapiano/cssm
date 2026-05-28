@@ -5,7 +5,7 @@
      column: brand-strip → first nav item, last nav item → "Sessions"
      header, and "Sessions" header → first folder. Bump or shrink to
      adjust how breathy the rail feels. */
-  --sidebar-section-gap: var(--s-3);
+  --sidebar-section-gap: var(--s-2);
   position: sticky;
   top: 0;
   height: 100vh;
@@ -400,7 +400,9 @@ body.is-resizing-sidebar * {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0 10px;
+  /* Right padding matches .tree-session so the +-button glyph
+     right-aligns with the per-row tree-meta timestamp below. */
+  padding: 0 8px;
   min-height: 24px;
   height: 24px;
   font-size: 12px;
@@ -415,7 +417,10 @@ body.is-resizing-sidebar * {
   appearance: none;
   background: transparent;
   border: 0;
-  padding: 2px 4px;
+  /* Zero right padding so the glyph itself lands flush against the
+     row's 8px right inset — same column as the tree-meta text on
+     each session row. */
+  padding: 2px 0 2px 4px;
   border-radius: 4px;
   cursor: pointer;
   color: var(--ink);
@@ -693,9 +698,10 @@ body.is-resizing-sidebar * {
 .tree-session-action:hover { opacity: 1; background: var(--sidebar-hover); }
 .tree-session-action svg { width: 12px; height: 12px; }
 .tree-meta {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--ink);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
-  opacity: 0.5;
+  opacity: 0.55;
+  letter-spacing: 0.01em;
 }

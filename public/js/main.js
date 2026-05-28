@@ -201,7 +201,19 @@ navigator.windowControlsOverlay?.addEventListener?.('geometrychange', syncTitleb
   // loadWorkspaces is included because the workspace "in use" flag is
   // derived from live session cwds server-side — without it, sessions
   // move in/out of a workspace silently and the grid stays stale.
+  // Skipped while a remote tab is sitting in the pending-approval
+  // overlay — every call would 403, fill the console with red, and the
+  // user can't see anything anyway. PendingApprovalOverlay handles its
+  // own re-hydrate the moment we get approved.
   setInterval(async () => {
+    if (pendingDevice.value) {
+      // Skip the data fetches (every one would 403) but still poll
+      // health so the OfflineBanner can show if the host goes down
+      // while we're sitting on the approval screen.
+      pollHealth();
+      clockTick.value = Date.now();
+      return;
+    }
     try {
       await Promise.all([loadSessions(), loadFolders(), loadWorkspaces()]);
       lastRefreshAt.value = Date.now();
@@ -217,6 +229,11 @@ navigator.windowControlsOverlay?.addEventListener?.('geometrychange', syncTitleb
   // caught by the post-close decision in server.js; long enough not to be
   // chatty.
   const ping = () => {
+    // While we're stuck on the pending-approval overlay, /api/heartbeat
+    // would 403 every 10s. Pointless noise — the host's watchdog is
+    // gated on real user activity anyway. Resumes automatically once
+    // pendingDevice clears.
+    if (pendingDevice.value) return Promise.resolve();
     const headers = {};
     // Heartbeat doesn't go through api.js' wrapper but still needs the
     // bearer token + device id when called via tunnel (the middleware

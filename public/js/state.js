@@ -17,6 +17,12 @@ export const serverHealth = signal({ state: 'connecting' });
 // frontend session. Gates UI (HealthOverlay) so it doesn't pop on the
 // very first boot probe while the page is still wiring up.
 export const hasBootedOnline = signal(false);
+// Set true the moment the user clicks "Restart backend" — the
+// RestartOverlay reads this signal and blocks the whole page until
+// the next health poll returns a fresh PID. Cleared by the overlay
+// itself on reconnect. Kept here (not in ConfigurePage local state)
+// so a stale tab on another page can't miss the in-flight restart.
+export const restartInFlight = signal(null);   // { startedAt, prevPid } | null
 
 // ── ui state (persisted in localStorage where noted) ───────────
 export const activeTab        = signal('sessions');

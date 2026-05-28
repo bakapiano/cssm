@@ -13,48 +13,22 @@
 import { html } from '../html.js';
 import { useEffect, useState } from 'preact/hooks';
 import { serverHealth } from '../state.js';
-import { refreshAll, pollHealth } from '../api.js';
+import { refreshAll } from '../api.js';
 import { BrandMark } from '../icons.js';
-
-// Silent ccsm:// launch via hidden iframe. Same trick as the router.
-// If the protocol is registered AND the user has already OK'd the
-// Windows confirmation prompt, ccsm wakes up within ~2s and the
-// banner auto-dismisses on the next health poll. On a cold first
-// visit (protocol not registered, or "Always allow" not yet ticked),
-// the iframe noops silently and the manual "Start ccsm" button is
-// still there as fallback.
-function silentProtocolLaunch() {
-  try {
-    const f = document.createElement('iframe');
-    f.style.display = 'none';
-    f.src = 'ccsm://start';
-    document.body.appendChild(f);
-    setTimeout(() => { try { f.remove(); } catch {} }, 1500);
-  } catch {}
-}
 
 export function OfflineBanner() {
   const h = serverHealth.value;
   const offline = h.state === 'offline';
   const [clicked, setClicked] = useState(false);
-  const [autoTried, setAutoTried] = useState(false);
 
-  // First time we see offline state, try a silent ccsm:// launch and
-  // tighten the health-poll cadence for a few seconds so the redirect
-  // happens within ~2-3s without any visible UI flash.
-  useEffect(() => {
-    if (!offline || autoTried) return;
-    setAutoTried(true);
-    silentProtocolLaunch();
-    let n = 0;
-    const tick = async () => {
-      if (n++ > 12) return;                  // ~6s of tight polling
-      await pollHealth();
-      if (serverHealth.value.state === 'online') return;
-      setTimeout(tick, 500);
-    };
-    setTimeout(tick, 500);
-  }, [offline]);
+  // We used to silently fire ccsm://start via a hidden iframe the
+  // moment the backend went offline. Even when the user had OK'd
+  // "Always allow" once, some browsers still flashed a momentary
+  // confirmation prompt — and first-time visitors got a "Open
+  // ccsm.cmd?" dialog with no apparent trigger, which is a bad UX.
+  // The Start button below is the only path that fires the protocol
+  // now; the health poll picks the backend up automatically once
+  // the user clicks it (or starts ccsm from a terminal / shortcut).
 
   useEffect(() => {
     if (h.state === 'online' && clicked) {
