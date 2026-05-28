@@ -5,12 +5,33 @@
 import { render } from 'preact';
 import { effect } from '@preact/signals';
 import { html } from './html.js';
-import { loadPersisted, clockTick, lastRefreshAt, installPrompt, isInstalledPwa, sidebarForcedCollapsed, activeTab, activeSessionId, sessions, TAB_HEADINGS } from './state.js';
-import { httpBase } from './backend.js';
-import { loadConfig, refreshAll, loadSessions, loadFolders, loadWorkspaces, pollHealth } from './api.js';
+import { loadPersisted, clockTick, lastRefreshAt, installPrompt, isInstalledPwa, sidebarForcedCollapsed, isMobile, mobileDrawerOpen, activeTab, activeSessionId, sessions, TAB_HEADINGS } from './state.js';
+import { httpBase, setToken, getDeviceId, isRemoteAccess } from './backend.js';
+import { api, loadConfig, refreshAll, loadSessions, loadFolders, loadWorkspaces, pollHealth, pendingDevice } from './api.js';
 import { setToast } from './toast.js';
 import { App } from './components/App.js';
 import { installGlobalKeybindings } from './keybindings.js';
+
+// First thing we do on boot: if the URL carries `?token=…` it's a fresh
+// share link from the Remote page on the host machine. Stash it in
+// localStorage so api.js / TerminalView pick it up, then strip the query
+// string from the URL via history.replaceState — keeps the secret out
+// of the address bar / browser history / clipboard sharing later.
+// Also ensure a device id exists in localStorage right away — getDeviceId
+// is a side-effecting getter (creates + persists on first call). Calling
+// it here means api.js sees a stable id from the very first fetch.
+(() => {
+  try {
+    const u = new URL(location.href);
+    const t = u.searchParams.get('token');
+    if (t) {
+      setToken(t);
+      u.searchParams.delete('token');
+      history.replaceState(null, '', u.pathname + (u.search ? `?${u.searchParams.toString()}` : '') + u.hash);
+    }
+    getDeviceId();
+  } catch {}
+})();
 
 loadPersisted();
 installGlobalKeybindings();
@@ -84,13 +105,24 @@ matchMedia('(display-mode: browser)').addEventListener('change', applyIsAppClass
 matchMedia('(display-mode: window-controls-overlay)').addEventListener('change', applyIsAppClass);
 matchMedia('(display-mode: standalone)').addEventListener('change', applyIsAppClass);
 
-// Force-collapse the sidebar on narrow viewports. Mirrors the responsive
-// CSS so JS state (toggle visibility, tree-render gating) agrees with the
-// rendered layout.
-const narrowMq = matchMedia('(max-width: 900px)');
-function applyNarrow() { sidebarForcedCollapsed.value = narrowMq.matches; }
-applyNarrow();
-narrowMq.addEventListener('change', applyNarrow);
+// The old 640–900px "force-collapse" mode is gone — narrow desktops
+// keep the full sidebar, phone viewports get the FAB drawer below.
+// `sidebarForcedCollapsed` is left at its default `false` so any
+// remaining readers (Sidebar resize handle gate, etc.) behave like
+// desktop. Removing the signal entirely would mean touching every
+// consumer; leaving it inert is a smaller blast radius.
+
+// Phone-sized viewports get a different nav model: sidebar hidden,
+// floating bottom-left button opens a full-screen drawer.
+const mobileMq = matchMedia('(max-width: 640px)');
+function applyMobile() {
+  isMobile.value = mobileMq.matches;
+  // Always close the drawer on a breakpoint flip so the user doesn't
+  // resize from desktop into mobile with a phantom open drawer.
+  if (mobileDrawerOpen.value) mobileDrawerOpen.value = false;
+}
+applyMobile();
+mobileMq.addEventListener('change', applyMobile);
 
 // Counter-zoom for the page-title-bar. Browser page zoom (Ctrl+wheel) scales every CSS px including our header heights;
 // without this, the header gets visually taller at 150%+ which the user
@@ -105,6 +137,25 @@ function syncAntiZoom() {
 syncAntiZoom();
 window.addEventListener('resize', syncAntiZoom);
 
+// WCO title-bar height — read the actual OS strip height via
+// navigator.windowControlsOverlay.getTitlebarAreaRect() and publish it
+// as --titlebar-h. CSS env(titlebar-area-height) is the analogous value
+// but Chromium occasionally lies (under-reports by a couple px on Edge),
+// and we don't get a JS handle to drive other measurements from. The
+// JS API is the source of truth here; the rect's height is exactly the
+// strip the OS leaves us. Fires on geometrychange so window-move-across-
+// monitors / DPI-flip / restore-from-maximize re-sync.
+function syncTitlebarHeight() {
+  try {
+    const r = navigator.windowControlsOverlay?.getTitlebarAreaRect?.();
+    if (r && r.height > 0) {
+      document.documentElement.style.setProperty('--titlebar-h', `${r.height}px`);
+    }
+  } catch { /* unsupported · CSS falls back to env() then 32px */ }
+}
+syncTitlebarHeight();
+navigator.windowControlsOverlay?.addEventListener?.('geometrychange', syncTitlebarHeight);
+
 (async () => {
   // Version-mismatch guard runs FIRST. If the user's backend has been
   // upgraded since this per-version frontend was loaded, bounce back to
@@ -112,6 +163,28 @@ window.addEventListener('resize', syncAntiZoom);
   // speaks a different API revision. Runs in dev too (it no-ops without
   // the build-time <meta>).
   await bootVersionGuard();
+
+  // On a remote browser we MUST register at /api/devices/me before any
+  // other /api/* call — the device gate 401s with "unknown device"
+  // otherwise. The /me handler accepts the token from the share URL,
+  // creates a pending record, and (post-approval) keeps returning the
+  // existing record without a token. Setting pendingDevice from the
+  // response wakes PendingApprovalOverlay; on approval the signal
+  // clears in there.
+  if (isRemoteAccess()) {
+    try {
+      const me = await api('GET', '/api/devices/me');
+      if (me && me.status !== 'approved') {
+        pendingDevice.value = {
+          pending: me.status === 'pending',
+          rejected: me.status === 'rejected',
+          deviceId: me.id,
+          firstSeen: me.firstSeen,
+          at: Date.now(),
+        };
+      }
+    } catch (e) { /* token bad / network blip — surfaces via other calls */ }
+  }
 
   try {
     await loadConfig();
@@ -143,7 +216,17 @@ window.addEventListener('resize', syncAntiZoom);
   // 10s cadence is short enough that any tab open for one full cycle gets
   // caught by the post-close decision in server.js; long enough not to be
   // chatty.
-  const ping = () => fetch(httpBase() + '/api/heartbeat', { method: 'POST', keepalive: true }).catch(() => {});
+  const ping = () => {
+    const headers = {};
+    // Heartbeat doesn't go through api.js' wrapper but still needs the
+    // bearer token + device id when called via tunnel (the middleware
+    // blocks it otherwise and the server thinks the session went idle).
+    const t = (typeof localStorage !== 'undefined') ? localStorage.getItem('ccsm.token') : null;
+    if (t) headers['Authorization'] = `Bearer ${t}`;
+    const d = getDeviceId();
+    if (d) headers['X-Device-Id'] = d;
+    return fetch(httpBase() + '/api/heartbeat', { method: 'POST', headers, keepalive: true }).catch(() => {});
+  };
   ping();
   setInterval(ping, 10_000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) ping(); });

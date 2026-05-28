@@ -32,6 +32,13 @@ body.is-resizing-sidebar .app {
   min-height: 0;
   padding: 0 var(--s-4);
   gap: var(--s-2);
+  /* .settings-scroll inside uses `margin-right: -var(--s-4)` to bleed
+     past .main's padding so its scrollbar sits flush with the window
+     edge. Without this clip that 16-px bleed propagates up to <body>
+     and shows a permanent horizontal scrollbar on every page. Vertical
+     scrolling stays inside .settings-scroll itself (overflow-y:auto)
+     so this clip doesn't suppress anything legitimate. */
+  overflow-x: hidden;
 }
 
 .page-head {

@@ -1,18 +1,19 @@
 import { html } from '../html.js';
 import { signal } from '@preact/signals';
 import {
-  activeTab, sidebarCollapsed, sidebarForcedCollapsed, configDirty, capabilities,
+  activeTab, sidebarCollapsed, sidebarForcedCollapsed, isMobile, configDirty, capabilities,
   sessions, folders, sessionsByFolder, foldersCollapsed, activeSessionId,
   selectTab, selectSession, toggleSidebar, toggleFolder, setSidebarWidth,
 } from '../state.js';
 import { createFolder, renameFolder, deleteFolder, reorderFolders, setSessionFolder, reorderSessions, deleteSession, resumeSession, setSessionTitle } from '../api.js';
+import { isRemoteAccess } from '../backend.js';
 import { ccsmPrompt, ccsmConfirm } from '../dialog.js';
 import { setToast } from '../toast.js';
 import { fmtAgo } from '../util.js';
 import { clockTick } from '../state.js';
 import { useDragSort } from './useDragSort.js';
 import {
-  IconLaunch, IconConfigure,
+  IconLaunch, IconConfigure, IconRemote,
   IconSidebarToggle, IconPencil, IconClose, IconFolder, IconFolderOpen, IconPlus, BrandMark,
 } from '../icons.js';
 
@@ -309,8 +310,13 @@ function SessionTree() {
 }
 
 export function Sidebar() {
-  const collapsed = sidebarCollapsed.value || sidebarForcedCollapsed.value;
-  const forced = sidebarForcedCollapsed.value;
+  // On phones the sidebar is rendered inside a full-screen drawer
+  // (App applies .is-mobile + .drawer-open classes). It should always
+  // appear in EXPANDED form there — full labels + sessions tree.
+  // Desktop/tablet keeps the original collapse behaviour.
+  const mobile = isMobile.value;
+  const collapsed = !mobile && (sidebarCollapsed.value || sidebarForcedCollapsed.value);
+  const forced = !mobile && sidebarForcedCollapsed.value;
 
   const onResizeStart = (ev) => {
     if (collapsed) return;
@@ -346,6 +352,9 @@ export function Sidebar() {
       <nav class="sidebar-nav compact" role="tablist" aria-label="Sections">
         <${NavItem} tab="launch"    icon=${html`<${IconLaunch} />`}    label="New Session" />
         <${NavItem} tab="configure" icon=${html`<${IconConfigure} />`} label="Settings" dirty=${configDirty.value} />
+        ${!isRemoteAccess() ? html`
+          <${NavItem} tab="remote"  icon=${html`<${IconRemote} />`}    label="Remote" />
+        ` : null}
       </nav>
 
       ${!collapsed ? html`<${SessionTree} />` : null}

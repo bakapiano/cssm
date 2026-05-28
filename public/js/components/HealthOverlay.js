@@ -21,6 +21,7 @@ import { useEffect } from 'preact/hooks';
 import { serverHealth, hasBootedOnline } from '../state.js';
 import { pollHealth, refreshAll } from '../api.js';
 import { BrandMark } from '../icons.js';
+import { isRemoteAccess } from '../backend.js';
 
 const THRESHOLD = 3;     // failures before we switch from "checking" to "not running"
 const FAST_POLL_MS = 1500;
@@ -65,6 +66,17 @@ export function HealthOverlay() {
           <h1 class="offline-title">Checking backend health…</h1>
           <p class="offline-copy">
             ${count === 0 ? 'Probing localhost:7777.' : `${count} attempt${count > 1 ? 's' : ''}. Hang tight.`}
+          </p>
+        ` : isRemoteAccess() ? html`
+          <h1 class="offline-title">Host machine offline</h1>
+          <p class="offline-copy">
+            The ccsm backend you connected to over the tunnel isn't reachable.
+            Only the operator at the host machine can restart it — the tunnel
+            URL is dead until ccsm is running there again.
+          </p>
+          <p class="offline-copy" style="margin-top:8px;font-size:12px;color:var(--ink-muted)">
+            We'll keep polling and reconnect automatically as soon as the
+            backend comes back.
           </p>
         ` : html`
           <h1 class="offline-title">Backend not running</h1>

@@ -131,6 +131,30 @@ export const IconMoreVert = ic('0 0 24 24', html`
   <circle cx="12" cy="19" r="1.6" fill="currentColor" stroke="none"/>
 `, 16);
 
+// Broadcast / remote — radiating arcs over a centre dot. Used on the
+// Remote nav tab; reads as "this machine is broadcasting" / "remote
+// access available".
+export const IconRemote = ic('0 0 24 24', html`
+  <circle cx="12" cy="12" r="2"/>
+  <path d="M8.5 8.5a5 5 0 0 0 0 7"/>
+  <path d="M15.5 8.5a5 5 0 0 1 0 7"/>
+  <path d="M5.5 5.5a9 9 0 0 0 0 13"/>
+  <path d="M18.5 5.5a9 9 0 0 1 0 13"/>
+`, 18);
+
+// Copy — two stacked rectangles. For "copy to clipboard" affordance
+// next to URLs / tokens in the Remote page.
+export const IconCopy = ic('0 0 24 24', html`
+  <rect x="9" y="9" width="11" height="11" rx="2"/>
+  <path d="M5 15V6a2 2 0 0 1 2-2h9"/>
+`, 13);
+
+// Recycle / regenerate — for "regenerate token" button.
+export const IconRecycle = ic('0 0 24 24', html`
+  <polyline points="23 4 23 10 17 10"/>
+  <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+`, 14);
+
 // Brand-colored CLI marks. These use external SVG assets (full color),
 // rendered as <img> so the gradients / fills in the file are preserved.
 export const IconClaudeColor = () => html`

@@ -1,17 +1,58 @@
 // Fetch wrapper + every loader. Loaders push into signals from ./state.js.
 // Cross-origin (hosted frontend → local backend) flows through httpBase().
 
+import { signal } from '@preact/signals';
 import * as S from './state.js';
-import { httpBase } from './backend.js';
+import { httpBase, getToken, getDeviceId, isRemoteAccess } from './backend.js';
+
+// Global pending-approval signal. Flipped to true whenever any /api
+// call returns 403 {pending:true}; PendingApprovalOverlay watches this
+// and shows the blocking screen. We also stash the server's record so
+// the overlay can display "we recorded you at HH:MM" detail.
+export const pendingDevice = signal(null);
 
 export async function api(method, url, body) {
   const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  // When a remote token is configured (Remote page set it OR the page
+  // was loaded with ?token= and we stashed it in localStorage), attach
+  // it to every API call. The server middleware lets loopback Hosts
+  // through without the token; for tunnel-served pages this is the
+  // only way past the 401.
+  const tok = getToken();
+  if (tok) opts.headers['Authorization'] = `Bearer ${tok}`;
+  // Always send our device id when one exists in localStorage. The host
+  // browser at localhost doesn't strictly need it (loopback bypass),
+  // but harmless — the server simply records lastSeen for it. Required
+  // for any tunnel-served page to clear the device-approval gate.
+  const dev = getDeviceId();
+  if (dev) opts.headers['X-Device-Id'] = dev;
   if (body !== undefined) opts.body = JSON.stringify(body);
   const r = await fetch(httpBase() + url, opts);
   const text = await r.text();
   let json;
   try { json = text ? JSON.parse(text) : {}; } catch { json = { raw: text }; }
-  if (!r.ok) throw new Error(json.error || `HTTP ${r.status}`);
+  if (!r.ok) {
+    // Surface device-approval pending state. Only matters on remote
+    // tabs — host's loopback browser never gets a 401/403 from these
+    // checks.
+    if (isRemoteAccess()) {
+      if (r.status === 403 && json && (json.pending || json.rejected)) {
+        pendingDevice.value = { ...json, at: Date.now() };
+      } else if (r.status === 401) {
+        // Server doesn't recognise our device — either fresh page load
+        // (no /api/devices/me hit yet) or our record got deleted /
+        // pruned. Drop into the pending overlay; its /me poll will
+        // re-register us using the token we still have in localStorage,
+        // and the response sets pendingDevice to the correct state.
+        pendingDevice.value = { pending: true, at: Date.now() };
+      }
+    }
+    throw new Error(json.error || `HTTP ${r.status}`);
+  }
+  // PendingApprovalOverlay clears pendingDevice itself based on the
+  // /api/devices/me body (which can return 200 with status:'pending'
+  // since that endpoint is gate-exempt). Doing an auto-clear here on
+  // any 2xx would race the overlay's poll and dismiss it prematurely.
   return json;
 }
 

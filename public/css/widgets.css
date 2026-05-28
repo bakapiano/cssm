@@ -749,8 +749,15 @@
   display: flex;
   flex-direction: column;
   gap: var(--s-4);
-  padding: 4px var(--s-2) var(--s-4) 4px;
-  margin: -4px calc(-1 * var(--s-2)) 0 -4px;
+  /* Negative right margin = -var(--s-4) cancels .main's padding-right
+     so the scroll container — and therefore the scrollbar — reach the
+     full window edge. Padding-right = var(--s-4) preserves the same
+     visual gap between content and the right edge that was there
+     before. Top padding bumped to var(--s-3) so the first section title
+     has visible breathing room from the page-title-bar separator above
+     it (4px was almost flush). Negative margin-top stays in sync. */
+  padding: var(--s-4) var(--s-4) var(--s-4) 4px;
+  margin: -4px calc(-1 * var(--s-4)) 0 -4px;
 }
 /* In a flex column container, items default to flex-shrink:1 which
    causes the cards to compress instead of pushing the scroll container
@@ -1625,4 +1632,271 @@
   border-radius: 999px;
   background: var(--bg);
   border: 1px solid var(--border);
+}
+
+/* ── Remote page ──────────────────────────────────────────────────
+   Uses the existing .settings-scroll + Section + .config-grid + .field
+   + .chip system from ConfigurePage. Only adds the bits that don't
+   already exist: the inline status line per provider, the token-row
+   input + action cluster, the URL row, the CLI log block, and the
+   bulleted security list. */
+
+.remote-status-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  font-size: 12.5px;
+  color: var(--ink-mid);
+}
+.remote-status-line .small-mono { font-size: 11px; }
+.remote-status-line .warn  { color: #b86a2a; font-weight: 500; }
+.remote-status-line .muted { color: var(--ink-muted); }
+.remote-status-line code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  background: var(--bg);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.remote-token-row {
+  display: flex;
+  gap: var(--s-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.remote-token-input {
+  flex: 1;
+  min-width: 240px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  padding: 7px 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg-elev);
+  color: var(--ink);
+}
+.remote-token-input:focus {
+  outline: none;
+  border-color: var(--ink);
+  box-shadow: 0 0 0 1px var(--ink);
+}
+
+.remote-url-line {
+  display: flex;
+  gap: var(--s-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.remote-url-value {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--bg);
+  padding: 6px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-log {
+  font-size: 11.5px;
+  color: var(--ink-mid);
+}
+.remote-log summary { cursor: pointer; user-select: none; }
+.remote-log pre {
+  margin-top: var(--s-2);
+  padding: var(--s-3);
+  background: var(--ink);
+  color: var(--bg-elev);
+  border-radius: var(--r-sm);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.remote-empty {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink-muted);
+  padding: var(--s-3);
+  background: var(--bg);
+  border-radius: var(--r-sm);
+  text-align: center;
+}
+.remote-devices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+.remote-devices-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.remote-devices-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  margin-bottom: 2px;
+}
+.remote-devices-group-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-mid);
+}
+.remote-devices-group-count {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-muted);
+  background: var(--bg);
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+.remote-devices-group-hint {
+  font-size: 11px;
+  font-style: italic;
+  color: var(--ink-muted);
+}
+.remote-device {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: 10px 12px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+.remote-device.is-pending {
+  border-color: #b86a2a;
+  background: rgba(184, 106, 42, 0.04);
+}
+.remote-device.is-rejected {
+  background: var(--bg);
+  opacity: 0.8;
+}
+.remote-device-main {
+  flex: 1;
+  min-width: 0;
+}
+.remote-device-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.remote-device-label .icon-btn {
+  background: transparent;
+  border: 0;
+  padding: 2px;
+  cursor: pointer;
+  color: var(--ink-muted);
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+}
+.remote-device-label .icon-btn:hover { color: var(--ink); background: var(--bg); }
+.remote-device-meta {
+  font-size: 11.5px;
+  color: var(--ink-mid);
+  margin-top: 2px;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.remote-device-meta .mono { font-family: var(--mono); font-size: 11px; }
+.remote-device-ua {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 380px;
+  white-space: nowrap;
+}
+.remote-device-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.remote-device-actions .action.small { padding: 4px 10px; font-size: 11.5px; }
+
+/* Remote · "How access works" — three fact rows separated by hairlines,
+   inset on the left by a 2px ink bar so the section reads as quiet
+   reference material instead of an alert. */
+.remote-facts {
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.remote-fact {
+  position: relative;
+  padding: var(--s-3) var(--s-3) var(--s-3) var(--s-5);
+  border-bottom: 1px solid var(--border);
+}
+.remote-fact:first-child { padding-top: var(--s-2); }
+.remote-fact:last-child  { border-bottom: 0; padding-bottom: var(--s-2); }
+.remote-fact::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: var(--s-3);
+  bottom: var(--s-3);
+  width: 2px;
+  background: var(--ink);
+  border-radius: 1px;
+  opacity: 0.35;
+}
+.remote-fact dt {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -0.005em;
+  margin-bottom: 4px;
+}
+.remote-fact dd {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-mid);
+  line-height: 1.6;
+}
+.remote-fact dd code {
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--bg);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.remote-fact dd strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+.remote-fact dd em {
+  font-style: italic;
+  color: var(--ink);
+}
+.remote-fact-pill {
+  display: inline-block;
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(184, 106, 42, 0.14);
+  color: #8b4f1f;
+  font-weight: 500;
 }

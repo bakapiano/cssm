@@ -418,11 +418,25 @@
   height: 100%;
 }
 .session-pane-body .terminal-empty {
-  background: var(--bg);
+  background: #1a1815;
+  color: #e8e3d5;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: var(--s-3);
   height: 100%;
+  font-size: 13px;
+}
+.session-pane-body .terminal-empty .mono {
+  color: #e07b6e;
+}
+.session-pane-body .terminal-empty .action.primary {
+  background: #e8e3d5;
+  color: #1a1815;
+  border-color: #e8e3d5;
+}
+.session-pane-body .terminal-empty .action.primary:hover {
+  background: #faf9f5;
+  border-color: #faf9f5;
 }

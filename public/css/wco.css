@@ -124,7 +124,8 @@ body.is-app:not(.is-wco) .session-pane {
    title-bar border. Give a little breathing room. Sessions has its
    own full-bleed terminal pane; About has its own hero header. */
 body.is-app:not(.is-wco) [data-panel="configure"],
-body.is-app:not(.is-wco) [data-panel="launch"] {
+body.is-app:not(.is-wco) [data-panel="launch"],
+body.is-app:not(.is-wco) [data-panel="remote"] {
   padding-top: var(--s-4);
 }
 /* Sidebar nav rows (New Session / Settings) also need a top gap in
@@ -149,22 +150,22 @@ body.is-wco .page-title-bar {
 }
 body.is-wco .page-title-bar,
 body.is-wco .sidebar-top {
-  /* env(titlebar-area-height) is Chromium's reported safe-area height, but
-     in practice Edge on Windows often paints the OS controls overlay a few
-     px taller than that value — so sizing our top band to exactly env()
-     leaves a sliver of the strip BELOW (session-tabs) still under the
-     overlay and the kebab gets clipped. Take the max with 40px so we
-     always reserve at least the default page-title-bar height regardless
-     of what env() reports. Matches non-WCO modes too. */
-  height: calc(max(40px, env(titlebar-area-height, 40px)) * var(--anti-zoom, 1));
-  min-height: calc(max(40px, env(titlebar-area-height, 40px)) * var(--anti-zoom, 1));
-  max-height: calc(max(40px, env(titlebar-area-height, 40px)) * var(--anti-zoom, 1));
+  /* --titlebar-h is set from JS reading
+     navigator.windowControlsOverlay.getTitlebarAreaRect().height — the
+     OS-reported strip the overlay reserves for us. CSS env() and a 32px
+     baseline are layered fallbacks when the JS API is unavailable. No
+     min-floor on the JS path: the OS knows its own caption height best,
+     and over-padding (the previous max(40px, …)) made the chrome look
+     visibly chunkier than the rest of the window. */
+  height: calc(var(--titlebar-h, env(titlebar-area-height, 32px)) * var(--anti-zoom, 1));
+  min-height: calc(var(--titlebar-h, env(titlebar-area-height, 32px)) * var(--anti-zoom, 1));
+  max-height: calc(var(--titlebar-h, env(titlebar-area-height, 32px)) * var(--anti-zoom, 1));
 }
 body.is-wco .sidebar-brand,
 body.is-wco .sidebar-brand-button,
 body.is-wco .collapse-toggle {
-  height: max(40px, env(titlebar-area-height, 40px));
-  min-height: max(40px, env(titlebar-area-height, 40px));
+  height: var(--titlebar-h, env(titlebar-area-height, 32px));
+  min-height: var(--titlebar-h, env(titlebar-area-height, 32px));
 }
 /* terminals.css uses the .tab-panel's gap (s-4) plus a -s-4 margin-top on
    .session-tabs to close that gap, so the tab strip visually flushes

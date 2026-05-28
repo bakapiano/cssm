@@ -9,7 +9,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { WebglAddon } from '@xterm/addon-webgl';
-import { wsBase } from '../backend.js';
+import { wsBase, getToken, getDeviceId } from '../backend.js';
 
 // Dark xterm theme. We give the terminal a near-black ink background to
 // match what claude code's TUI assumes (it paints its own input box +
@@ -40,9 +40,15 @@ export function TerminalView({ terminalId }) {
   useEffect(() => {
     if (!terminalId || !hostRef.current) return;
 
+    // Mobile viewports (≤ 640px) get a smaller default font so claude's
+    // UI fits ~50 cols instead of the ~26 that 13px would buy at 390px.
+    // Desktop stays at 13. We re-evaluate on every mount, so a viewport
+    // rotation that crosses the breakpoint picks up the new size on
+    // next mount (rare; users typically don't rotate mid-session).
+    const baseFontSize = window.matchMedia('(max-width: 640px)').matches ? 11 : 13;
     const term = new Terminal({
       fontFamily: '"Cascadia Mono", "Geist Mono", "JetBrains Mono", Consolas, monospace',
-      fontSize: 13,
+      fontSize: baseFontSize,
       lineHeight: 1.2,
       cursorBlink: true,
       cursorStyle: 'bar',
@@ -108,7 +114,17 @@ export function TerminalView({ terminalId }) {
     requestAnimationFrame(() => { try { fit.fit(); } catch {} });
     termRef.current = term;
 
-    const ws = new WebSocket(`${wsBase()}/ws/terminal/${encodeURIComponent(terminalId)}`);
+    // Browser WS API can't set Authorization headers — token + device
+    // ride as query string when we have them (Remote-mode access).
+    // Server's upgrade handler reads both when Host is non-loopback.
+    const tok = getToken();
+    const dev = getDeviceId();
+    const params = new URLSearchParams();
+    if (tok) params.set('token', tok);
+    if (dev) params.set('device', dev);
+    const qs = params.toString();
+    const wsUrl = `${wsBase()}/ws/terminal/${encodeURIComponent(terminalId)}${qs ? `?${qs}` : ''}`;
+    const ws = new WebSocket(wsUrl);
     ws.binaryType = 'arraybuffer';
     wsRef.current = ws;
 

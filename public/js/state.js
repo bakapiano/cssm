@@ -26,6 +26,11 @@ export const sidebarCollapsed = signal(false);
 // by the responsive layout — the toggle button hides in that case so the
 // user can't try (and fail) to expand it.
 export const sidebarForcedCollapsed = signal(false);
+// True on phone-sized viewports (≤ 640px). The sidebar then hides
+// entirely; a FAB at bottom-left opens a full-screen drawer.
+export const isMobile             = signal(false);
+// Mobile drawer visibility — toggled by the FAB / nav-item taps.
+export const mobileDrawerOpen     = signal(false);
 export const sidebarWidth     = signal(232);     // px when expanded, persisted in localStorage
 export const accentColor      = signal('#2f6fa3'); // user-chosen brand accent, persisted
 // Per-folder collapse state in the sidebar tree. Stored as a plain object
@@ -86,6 +91,7 @@ export const TAB_HEADINGS = {
   sessions:  { title: 'Sessions',  subtitle: 'Sessions you started in ccsm.' },
   launch:    { title: 'Launch',    subtitle: 'Spin up a new session in a fresh workspace.' },
   configure: { title: 'Configure', subtitle: 'Persisted to ~/.ccsm/config.json.' },
+  remote:    { title: 'Remote',    subtitle: 'Expose this backend to another device via tunnel + token.' },
   about:     { title: 'About',     subtitle: 'ccsm — Claude CLI Sessions Manager.' },
 };
 
@@ -222,12 +228,16 @@ export function selectTab(name) {
   if (!TAB_HEADINGS[name]) name = 'sessions';
   activeTab.value = name;
   if (location.hash !== `#${name}`) window.history.replaceState(null, '', `#${name}`);
+  // Tapping a nav item on mobile is also a "close the drawer" gesture
+  // — the user got what they came for, no need to keep the overlay up.
+  if (mobileDrawerOpen.value) mobileDrawerOpen.value = false;
 }
 
 export function selectSession(id) {
   activeSessionId.value = id;
   activeTab.value = 'sessions';
   if (location.hash !== '#sessions') window.history.replaceState(null, '', '#sessions');
+  if (mobileDrawerOpen.value) mobileDrawerOpen.value = false;
 }
 
 export function toggleSidebar() {

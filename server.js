@@ -16,6 +16,8 @@ const {
 const webTerminal = require('./lib/webTerminal');
 const persistedSessions = require('./lib/persistedSessions');
 const folders = require('./lib/folders');
+const tunnel = require('./lib/tunnel');
+const devices = require('./lib/devices');
 // Upstream CLI session-id capture used to live in lib/cliSessionWatcher
 // (poll the CLI's transcript dir, match by cwd). It's gone now — for
 // CLIs that expose a "set the UUID for a new session" flag (claude +
@@ -44,6 +46,7 @@ async function gracefulShutdown(reason) {
     }
   } catch {}
   try { webTerminal.killAll(); } catch {}
+  try { tunnel.stop(); } catch {}
   process.exit(0);
 }
 
@@ -63,11 +66,85 @@ app.use((req, res, next) => {
   if (origin && ALLOWED_ORIGINS.has(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     res.setHeader('Vary', 'Origin');
   }
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
+});
+
+// Remote-access token guard. Once a token is set (via the Remote page
+// → POST /api/tunnel/start), any /api/* request that wasn't direct
+// loopback must present the token either as `Authorization: Bearer
+// <token>` or `?token=<token>`.
+// "Direct loopback" = the Host header is loopback-shaped AND no
+// proxy injected an X-Forwarded-* header. devtunnel rewrites Host
+// to `localhost:7788` (it's reverse-proxying via a local socket) but
+// adds `x-forwarded-host` / `x-forwarded-for`; cloudflared does the
+// same with `cf-connecting-ip` etc. Either header's mere presence
+// flips us into "treat as remote" mode regardless of Host. Real
+// browsers on the host machine set neither.
+// /api/health is exempt so tunnel URL probes keep working without
+// leaking the token.
+function isDirectLoopback(req) {
+  if (req.headers['x-forwarded-host']) return false;
+  if (req.headers['x-forwarded-for']) return false;
+  if (req.headers['cf-connecting-ip']) return false;
+  const host = String(req.headers.host || '').toLowerCase();
+  return /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(host);
+}
+// Device-approval gate.
+//
+// Two-stage trust model:
+//   1. NEW device wants in → must hit /api/devices/me with a valid
+//      token. That's the only place new pending records get created
+//      (see the handler below). Without the token, a stranger can't
+//      flood the host's pending queue with random device ids.
+//   2. ALREADY-known device → its UUID is the credential. The host
+//      Approved it once; subsequent calls go through with just the
+//      X-Device-Id header (no token needed). Rotating the host token
+//      doesn't break existing approved devices — they keep working
+//      until the host explicitly Revokes them.
+//
+// This middleware reads-only: it never inserts. Unknown ids → 401 to
+// nudge the caller to re-arrive via the share URL (which lands them
+// on /api/devices/me with the embedded token and registers them).
+const DEVICE_EXEMPT_PATHS = new Set(['/api/health', '/api/devices/me']);
+async function deviceGate(req, res, next) {
+  if (DEVICE_EXEMPT_PATHS.has(req.path)) return next();
+  if (!req.path.startsWith('/api/')) return next();
+  if (isDirectLoopback(req)) return next();
+  const id = String(req.headers['x-device-id'] || (req.query && req.query.device) || '');
+  if (!id) return res.status(400).json({ error: 'device id required' });
+  const d = await devices.get(id);
+  if (!d) return res.status(401).json({ error: 'unknown device · open the share URL to register' });
+  // Bump lastSeen via record() — it short-circuits the write when the
+  // last flush was recent (see MIN_FLUSH_MS in lib/devices.js).
+  try { await devices.record(id, {
+    userAgent: req.headers['user-agent'] || '',
+    ip: String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim(),
+  }); } catch { /* lastSeen bump is best-effort */ }
+  if (d.status === 'approved') return next();
+  return res.status(403).json({
+    error: d.status === 'rejected' ? 'device rejected by host' : 'pending host approval',
+    pending: d.status === 'pending',
+    rejected: d.status === 'rejected',
+    deviceId: d.id,
+  });
+}
+app.use(deviceGate);
+
+// Final admin lock — all device management + tunnel-mutating routes are
+// loopback-only. The remote browser already only sees /api/health and
+// /api/devices/me through the gates above; this stops a remote from
+// trying to enumerate or manipulate the approval list even if they
+// somehow got past everything.
+const HOST_ONLY_PREFIXES = ['/api/devices', '/api/tunnel'];
+app.use((req, res, next) => {
+  if (!HOST_ONLY_PREFIXES.some((p) => req.path === p || req.path.startsWith(p + '/'))) return next();
+  if (req.path === '/api/devices/me') return next();
+  if (isDirectLoopback(req)) return next();
+  res.status(403).json({ error: 'host-only endpoint' });
 });
 
 // Dev mode = running from a checkout (not from an npm-install location).
@@ -78,8 +155,20 @@ app.use((req, res, next) => {
 // frontend lives at https://bakapiano.github.io/ccsm/ (router → per-version).
 const IS_DEV = !__dirname.includes(`${path.sep}node_modules${path.sep}`) && process.env.CCSM_NO_DEV !== '1';
 
-if (IS_DEV) {
-  app.use(express.static(path.join(__dirname, 'public')));
+// Always serve public/ when it exists alongside server.js. In a
+// checkout this is the live frontend used during dev. In an npm
+// install this lets a tunneled session (Remote page) reach the
+// frontend at the tunnel URL — the GH Pages hosted frontend is
+// unreachable to a phone on cellular, but the locally-bundled
+// public/ shipped in the package IS, via the tunnel. Same files
+// either way; just no version router in front.
+{
+  const publicDir = path.join(__dirname, 'public');
+  try {
+    if (require('node:fs').statSync(publicDir).isDirectory()) {
+      app.use(express.static(publicDir));
+    }
+  } catch { /* not bundled · API-only mode */ }
 }
 
 const reloadClients = new Set();
@@ -939,6 +1028,108 @@ app.post('/api/shutdown', (_req, res) => {
   setImmediate(() => gracefulShutdown('/api/shutdown'));
 });
 
+// ---- remote / tunnel ----
+//
+// Lifecycle: the Remote page POSTs /start with { provider, token } —
+// we save the token (used by the middleware above for auth) and spawn
+// the chosen tunnel CLI. URL appears asynchronously in the CLI's
+// stdout; lib/tunnel parses it. /status returns the latest snapshot
+// for the page to poll.
+app.get('/api/tunnel/status', (_req, res) => {
+  res.json(tunnel.status());
+});
+app.post('/api/tunnel/start', asyncH(async (req, res) => {
+  const { provider, token } = req.body || {};
+  if (!token || String(token).length < 8) {
+    return res.status(400).json({ error: 'token required (≥ 8 chars)' });
+  }
+  tunnel.setToken(token);
+  try {
+    const result = await tunnel.start({ provider, port: currentPort });
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message, providers: tunnel.probe() });
+  }
+}));
+app.post('/api/tunnel/stop', (_req, res) => {
+  const stopped = tunnel.stop();
+  res.json({ stopped, ...tunnel.status() });
+});
+app.post('/api/tunnel/token', (req, res) => {
+  // Bare token update without touching the running tunnel.
+  // POST { token: '' } to clear and disable remote auth.
+  const t = (req.body && req.body.token) || '';
+  tunnel.setToken(t);
+  res.json(tunnel.status());
+});
+app.post('/api/tunnel/install', asyncH(async (req, res) => {
+  const { provider } = req.body || {};
+  try {
+    const r = tunnel.installViaWinget(provider);
+    res.json({ ok: true, ...r });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+}));
+
+// ---- devices ----
+//
+// /api/devices/me is callable from the remote browser BEFORE approval —
+// it's how the PendingApprovalOverlay polls for the host's decision.
+// Everything else is locked to loopback by the gate above.
+app.get('/api/devices/me', asyncH(async (req, res) => {
+  const id = String(req.headers['x-device-id'] || (req.query && req.query.device) || '');
+  if (!id) return res.status(400).json({ error: 'device id required' });
+  // Token check applies HERE — this is the only endpoint where new
+  // device records are created (record() inserts pending on first
+  // sight). Demanding the token at registration time stops random
+  // tunnel-URL scanners from filling the host's pending queue with
+  // garbage entries. Already-known devices can re-poll without the
+  // token (the existing record is returned as-is).
+  const existing = await devices.get(id);
+  if (!existing) {
+    const tok = tunnel.getToken();
+    if (tok && !isDirectLoopback(req)) {
+      const auth = req.headers.authorization || '';
+      const qTok = req.query && req.query.token;
+      if (auth !== `Bearer ${tok}` && qTok !== tok) {
+        return res.status(401).json({ error: 'token required to register a new device' });
+      }
+    }
+  }
+  const ua = req.headers['user-agent'] || '';
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+  const d = await devices.record(id, { userAgent: ua, ip });
+  res.json(d);
+}));
+app.get('/api/devices', asyncH(async (_req, res) => {
+  res.json({ devices: await devices.list() });
+}));
+app.post('/api/devices/:id/approve', asyncH(async (req, res) => {
+  const d = await devices.approve(req.params.id, req.body && req.body.label);
+  if (!d) return res.status(404).json({ error: 'device not found' });
+  res.json(d);
+}));
+app.post('/api/devices/:id/reject', asyncH(async (req, res) => {
+  const d = await devices.reject(req.params.id);
+  if (!d) return res.status(404).json({ error: 'device not found' });
+  res.json(d);
+}));
+app.post('/api/devices/:id/revoke', asyncH(async (req, res) => {
+  const d = await devices.revoke(req.params.id);
+  if (!d) return res.status(404).json({ error: 'device not found' });
+  res.json(d);
+}));
+app.put('/api/devices/:id', asyncH(async (req, res) => {
+  const d = await devices.rename(req.params.id, (req.body && req.body.label) || '');
+  if (!d) return res.status(404).json({ error: 'device not found' });
+  res.json(d);
+}));
+app.delete('/api/devices/:id', asyncH(async (req, res) => {
+  const removed = await devices.remove(req.params.id);
+  res.json({ removed });
+}));
+
 // Restart: in production, spawn the restart-helper detached then
 // gracefulShutdown — the helper waits for the port to free and respawns
 // `ccsm.cmd` (with CCSM_NO_BROWSER so we don't pop a new window — the
@@ -1348,11 +1539,26 @@ function openInBrowser(url) {
     try { ({ WebSocketServer } = require('ws')); } catch {}
     if (WebSocketServer) {
       const wss = new WebSocketServer({ noServer: true });
-      server.on('upgrade', (req, socket, head) => {
-        const origin = req.headers.origin;
-        if (origin && !ALLOWED_ORIGINS.has(origin) && !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) {
-          socket.destroy();
-          return;
+      server.on('upgrade', async (req, socket, head) => {
+        const direct = isDirectLoopback(req);
+        // Non-loopback WS: device id alone gates entry. The host
+        // explicitly Approved this device id earlier — that approval
+        // IS the credential. No token check here (matches the device
+        // gate above: token is only for /api/devices/me registration).
+        if (!direct) {
+          try {
+            const u = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+            const devId = u.searchParams.get('device');
+            if (!devId) { socket.destroy(); return; }
+            const d = await devices.get(devId);
+            if (!d || d.status !== 'approved') { socket.destroy(); return; }
+          } catch { socket.destroy(); return; }
+        } else {
+          const origin = req.headers.origin;
+          if (origin && !ALLOWED_ORIGINS.has(origin) && !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) {
+            socket.destroy();
+            return;
+          }
         }
         const m = req.url && req.url.match(/^\/ws\/terminal\/([^\/?#]+)/);
         if (!m) { socket.destroy(); return; }

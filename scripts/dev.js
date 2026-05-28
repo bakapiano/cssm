@@ -94,6 +94,17 @@ const env = {
   // `ccsm.cmd` and would replace our --watch checkout server). In dev
   // mode the server just process.exit(0)s and this script respawns it.
   CCSM_DEV: '1',
+  // Always opt out of the 90s heartbeat watchdog in dev. The watchdog
+  // only matters when ccsm is tied to its own spawned browser window —
+  // closing that window means ccsm should stop. In dev there's no such
+  // window (CCSM_NO_BROWSER above) and the contributor's browser tab
+  // may be closed for minutes during a long file edit. Without this,
+  // any ambient CCSM_LAUNCHER=1 in the parent shell would silently make
+  // the dev server self-terminate every 90s.
+  CCSM_KEEP_ALIVE: '1',
+  // Explicitly clear CCSM_LAUNCHER so the watchdog activation condition
+  // can never be true here regardless of the parent env.
+  CCSM_LAUNCHER: '',
 };
 
 const serverPath = path.join(__dirname, '..', 'server.js');
