@@ -52,7 +52,8 @@ export function TerminalView({ terminalId, cliType }) {
     // Desktop stays at 13. We re-evaluate on every mount, so a viewport
     // rotation that crosses the breakpoint picks up the new size on
     // next mount (rare; users typically don't rotate mid-session).
-    const baseFontSize = window.matchMedia('(max-width: 640px)').matches ? 11 : 13;
+    const isMobile = window.matchMedia('(max-width: 640px)').matches;
+    const baseFontSize = isMobile ? 11 : 13;
     const term = new Terminal({
       fontFamily: '"Cascadia Mono", "Geist Mono", "JetBrains Mono", Consolas, monospace',
       fontSize: baseFontSize,
@@ -92,12 +93,22 @@ export function TerminalView({ terminalId, cliType }) {
     // syntax-highlighted code). WebGL paints onto a canvas, much smoother
     // at thousands-of-cells per frame. Falls back to DOM if WebGL is
     // unavailable (e.g. older GPU, hardware accel disabled).
-    try {
-      const webgl = new WebglAddon();
-      webgl.onContextLoss(() => { try { webgl.dispose(); } catch {} });
-      term.loadAddon(webgl);
-    } catch (e) {
-      console.warn('[ccsm] WebGL addon failed, using DOM renderer:', e);
+    //
+    // Skipped on phones: @xterm/addon-webgl@0.18.0 miscalculates the glyph
+    // atlas at the fractional DPRs that modern Android handsets report
+    // (Pixel 6/7/8 = 2.625, S24 = 2.625, etc.) — every cell ends up
+    // rendered ~3× wider than the layout grid says it should, blowing out
+    // the terminal. Integer DPRs (1, 2, 3 — desktops, iPhones) and the
+    // common Windows 1.5 are fine, so the gate is on the mobile viewport
+    // breakpoint, not the raw DPR.
+    if (!isMobile) {
+      try {
+        const webgl = new WebglAddon();
+        webgl.onContextLoss(() => { try { webgl.dispose(); } catch {} });
+        term.loadAddon(webgl);
+      } catch (e) {
+        console.warn('[ccsm] WebGL addon failed, using DOM renderer:', e);
+      }
     }
     // Ctrl+C with a selection: by default xterm.js sends \x03 AND the
     // browser's own copy event fires — so the user gets "selection

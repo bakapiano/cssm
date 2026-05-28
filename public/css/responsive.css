@@ -69,13 +69,15 @@
   }
 
   /* iOS Safari + Edge auto-zoom the viewport when the user taps an
-     <input>/<textarea> whose font-size is < 16px — "terminal suddenly
-     goes huge" was almost certainly this. xterm.js's hidden
-     .xterm-helper-textarea sits at 12px CSS by default; bumping it to
-     16px stops the auto-zoom without affecting visible text (the
-     textarea is positioned at the cursor and overlapped by canvas
-     glyphs). Same defensive bump on every actual form input. */
-  .xterm-helper-textarea,
+     <input>/<textarea> whose font-size is < 16px. Defensive bump on
+     real form inputs. NOTE: we deliberately do NOT touch
+     .xterm-helper-textarea here — xterm.js measures cell dimensions
+     off that element's computed font, so forcing it to 16px makes the
+     terminal render every glyph at ~16px regardless of the fontSize
+     option we passed in. (TerminalView intentionally picks 11px on
+     phones for ~50 cols.) On real iPhone the helper textarea anti-
+     zoom is handled by the viewport meta tag instead — see
+     public/index.html's `maximum-scale=1.0`. */
   .input,
   input[type="text"],
   input[type="search"],

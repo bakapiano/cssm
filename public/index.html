@@ -2,7 +2,14 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- maximum-scale=1 stops iOS Safari from auto-zooming the page
+         when the user taps a sub-16px input. xterm's helper textarea
+         inherits the terminal's own font size (11px on phones); if we
+         instead bumped it to 16px via CSS, xterm would measure the
+         cell off the inflated textarea and render every glyph ~50%
+         oversized. Locking page zoom here lets us leave the textarea
+         alone. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
     <!-- Bleeds the cream surface into the Edge/Chrome --app= title bar
          so it visually disappears against the body. The browser does
          honor this in standalone app windows. -->
