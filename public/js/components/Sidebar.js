@@ -352,7 +352,7 @@ export function Sidebar() {
                 title="About"
                 onClick=${() => selectTab('about')}>
           <span class="brand-mark"><${BrandMark} /></span>
-          <span class="brand-name">CCSM<span class="brand-dot">.</span></span>
+          <span class="brand-name">CCSM</span>
         </button>
       </div>
 
