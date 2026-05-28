@@ -140,9 +140,16 @@ function SessionRow({ s, folderId, siblingIds }) {
       .catch((e) => setToast(e.message, 'error'));
   };
 
+  // Skip the HTML5 drag affordance on touch devices — `draggable=true`
+  // makes mobile browsers interpret the first tap as a drag-start
+  // gesture, swallowing the click event entirely. The user then needs
+  // a second tap to navigate. Touch users don't reorder sessions by
+  // drag anyway; we'd add a dedicated "move to folder" affordance if
+  // anyone asked.
+  const touchDevice = isMobile.value || (typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches);
   return html`
     <div class=${`tree-session${isActive ? ' is-active' : ''}${running ? ' is-running' : ' is-stopped'}${running && s.activity === 'working' ? ' is-working' : ''}${showInsertLine ? ' is-reorder-target' : ''}`}
-         draggable=${true}
+         draggable=${!touchDevice}
          onDragStart=${onDragStart}
          onDragEnd=${onDragEnd}
          onDragOver=${onRowDragOver}

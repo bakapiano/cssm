@@ -1,6 +1,11 @@
 /* Left collapsible sidebar nav · brand mark · util items · collapse toggle */
 
 .sidebar {
+  /* One value drives all three "section break" gaps in the sidebar
+     column: brand-strip → first nav item, last nav item → "Sessions"
+     header, and "Sessions" header → first folder. Bump or shrink to
+     adjust how breathy the rail feels. */
+  --sidebar-section-gap: var(--s-3);
   position: sticky;
   top: 0;
   height: 100vh;
@@ -262,7 +267,9 @@
   align-items: center;
   padding: 0;
   min-height: 40px;
-  margin-bottom: var(--s-2);
+  /* Sit flush above the first nav item — no extra breathing room
+     between the brand strip and the nav list. */
+  margin-bottom: 0;
 }
 .collapse-toggle {
   appearance: none;
@@ -337,12 +344,18 @@ body.is-resizing-sidebar * {
 
 /* Compact top nav: smaller height + smaller font, so the folder tree
    below dominates. */
+/* Match the dimensions of .tree-folder-head + .tree-session below so
+   the top nav, the folder head, and the session rows form one visually
+   continuous column: same left padding (icon at x=8), same icon-label
+   gap, same row height, same corner radius. Without this the nav
+   icons sit 2px further right than the folder icons and the rows are
+   noticeably taller. */
 .sidebar-nav.compact .nav-item {
   font-size: 13px;
-  padding: 4px 10px;
-  min-height: 30px;
-  gap: 10px;
-  border-radius: 6px;
+  padding: 4px 8px;
+  min-height: 28px;
+  gap: 8px;
+  border-radius: 4px;
   position: relative;
   letter-spacing: -0.005em;
   transition: background .14s ease, color .14s ease;
@@ -367,7 +380,7 @@ body.is-resizing-sidebar * {
 /* Tree section header. Looks like codex: uppercase label, small +
    button on hover. */
 .tree {
-  margin-top: var(--s-3);
+  margin-top: var(--sidebar-section-gap);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -394,6 +407,9 @@ body.is-resizing-sidebar * {
   font-weight: 500;
   letter-spacing: 0;
   color: var(--ink-mid);
+  /* No margin-bottom — let the parent .tree's `gap: 2px` carry the
+     space below, matching what sits between folder rows. The big gap
+     above "Sessions" still comes from .tree margin-top. */
 }
 .tree-head-action {
   appearance: none;
@@ -485,7 +501,11 @@ body.is-resizing-sidebar * {
   display: none;
   gap: 2px;
 }
-.tree-folder-head:hover .tree-folder-actions { display: inline-flex; }
+/* Same touch carve-out as session-actions above — don't reveal folder
+   rename/delete on a tap-emulated hover. */
+@media (hover: hover) and (pointer: fine) {
+  .tree-folder-head:hover .tree-folder-actions { display: inline-flex; }
+}
 .tree-folder-action {
   appearance: none;
   background: transparent;
@@ -643,8 +663,18 @@ body.is-resizing-sidebar * {
   gap: 2px;
   flex-shrink: 0;
 }
-.tree-session:hover .tree-session-actions { display: inline-flex; }
-.tree-session:hover .tree-meta { display: none; }
+/* Hover-only on real-pointer devices. On touch devices the first tap
+   emulates :hover (revealing rename/delete), which means the user has
+   to tap a second time to actually open the session. (hover: hover)
+   matches a real mouse / trackpad; (pointer: fine) further requires
+   precise cursor (so hybrid touch+mouse laptops with a stylus get
+   hover but pure-touch phones / tablets do not.) Phones keep the
+   timestamp visible and never reveal the action buttons here — they
+   can use the kebab in the session pane's top bar instead. */
+@media (hover: hover) and (pointer: fine) {
+  .tree-session:hover .tree-session-actions { display: inline-flex; }
+  .tree-session:hover .tree-meta { display: none; }
+}
 .tree-session-action {
   appearance: none;
   background: transparent;

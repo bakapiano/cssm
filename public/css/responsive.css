@@ -87,11 +87,13 @@
   select { font-size: 16px !important; }
 }
 
-/* FAB + backdrop · sit above page content but BELOW dialogs. */
+/* FAB + backdrop · sit above page content but BELOW dialogs. The
+   `left` and `bottom` inline styles come from MobileNavFab.js (drag-
+   persisted), so we don't set defaults here — the component seeds
+   them on mount. `touch-action: none` stops the browser from also
+   scrolling the page while the user is dragging the FAB. */
 .mobile-nav-fab {
   position: fixed;
-  bottom: max(16px, env(safe-area-inset-bottom));
-  left:   max(16px, env(safe-area-inset-left));
   z-index: 210;
   width: 52px;
   height: 52px;
@@ -105,12 +107,18 @@
   box-shadow:
     0 10px 24px -6px rgba(0,0,0,.28),
     0 2px 4px rgba(0,0,0,.10);
-  cursor: pointer;
-  transition: transform .15s, box-shadow .15s, background .15s;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  transition: box-shadow .15s, background .15s;
 }
-.mobile-nav-fab:hover  { transform: translateY(-1px); background: var(--bg); }
-.mobile-nav-fab:active { transform: translateY(0); }
-.mobile-nav-fab svg { width: 22px; height: 22px; stroke-width: 2; }
+/* No translateY on hover — would fight the inline left/bottom we set
+   on every pointermove during drag, making the FAB jitter under the
+   finger as :hover toggles on/off. Background-only hover for desktop
+   pointers; touch never matches :hover. */
+.mobile-nav-fab:hover  { background: var(--bg); }
+.mobile-nav-fab:active { cursor: grabbing; }
+.mobile-nav-fab svg { width: 22px; height: 22px; stroke-width: 2; pointer-events: none; }
 /* Open state stays the same paper white — only the icon swaps to X.
    Keeping the colour consistent reads as "same button, different
    mode" instead of two different controls. */

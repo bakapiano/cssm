@@ -32,7 +32,7 @@ const THEME = {
   white:   '#e8e3d5', brightWhite:   '#faf9f5',
 };
 
-export function TerminalView({ terminalId }) {
+export function TerminalView({ terminalId, cliType }) {
   const hostRef = useRef(null);
   const termRef = useRef(null);
   const wsRef = useRef(null);
@@ -280,12 +280,18 @@ export function TerminalView({ terminalId }) {
     // Shift+Enter / Ctrl+Enter → insert literal newline, don't submit.
     // Background: xterm.js encodes BOTH plain Enter and Shift+Enter and
     // Ctrl+Enter as \r (0x0D / CR). The kitty keyboard / win32 input
-    // protocols (enabled in vtExtensions above) WOULD distinguish them,
-    // but they're opt-in by the running app — claude code doesn't enable
-    // either, so we never get the distinction "for free".
+    // protocols WOULD distinguish them, but they're opt-in by the
+    // running app and most CLIs don't enable them, so we never get the
+    // distinction "for free". Each CLI handles modified-Enter differently:
     //
-    // Send the LF (0x0A) explicitly. Claude code (and most modern TUIs)
-    // treat \n inside a prompt as a literal newline insert, \r as submit.
+    //   claude   · expects a literal LF (0x0A) — its prompt treats \n
+    //              as "insert newline", \r as "submit". Workaround = '\n'.
+    //   codex / others · use ratatui or similar TUI libs that decode
+    //              the kitty keyboard CSI u sequence. We synthesise it
+    //              explicitly: `CSI 13 ; <mod> u` where mod = 2 for
+    //              Shift, 5 for Ctrl. That maps to the exact key+mod
+    //              the user pressed and ratatui inserts a newline.
+    //
     // Alt+Enter already works (xterm sends \x1b\r → meta-enter) so we
     // leave that alone.
     const onShiftEnter = (ev) => {
@@ -293,11 +299,21 @@ export function TerminalView({ terminalId }) {
       if (!(ev.shiftKey || ev.ctrlKey)) return;
       if (ev.metaKey || ev.altKey) return;
       if (!isOurs()) return;
+      // claude  → LF (its prompt parses \n as insert-newline).
+      // others  → ESC+CR i.e. Alt+Enter. crossterm (codex/copilot
+      //   TUI libs) decodes ESC-prefixed sequences as Alt-modified
+      //   without needing the kitty keyboard protocol enabled — and
+      //   codex's default keymap binds Alt+Enter to insert_newline
+      //   alongside Shift+Enter (see openai/codex
+      //   codex-rs/tui/src/keymap.rs L904-909). The kitty CSI u
+      //   sequence we tried first only works after the app has
+      //   negotiated kitty mode, which codex doesn't do by default.
+      const data = cliType === 'claude' ? '\n' : '\x1b\r';
       ev.preventDefault();
       ev.stopPropagation();
       ev.stopImmediatePropagation();
       if (ws.readyState === 1) {
-        ws.send(JSON.stringify({ type: 'input', data: '\n' }));
+        ws.send(JSON.stringify({ type: 'input', data }));
       }
     };
     document.addEventListener('keydown', onShiftEnter, true);

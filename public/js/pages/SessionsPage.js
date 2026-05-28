@@ -150,7 +150,7 @@ export function SessionsPage() {
     <div class="session-pane">
       <div class="session-pane-body">
         ${running
-          ? html`<${TerminalView} terminalId=${session.id} />`
+          ? html`<${TerminalView} terminalId=${session.id} cliType=${cli?.type} />`
           : html`
             <div class="terminal-empty">
               ${resumeError ? html`
