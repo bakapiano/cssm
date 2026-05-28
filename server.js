@@ -1035,9 +1035,9 @@ app.post('/api/shutdown', (_req, res) => {
 // the chosen tunnel CLI. URL appears asynchronously in the CLI's
 // stdout; lib/tunnel parses it. /status returns the latest snapshot
 // for the page to poll.
-app.get('/api/tunnel/status', (_req, res) => {
-  res.json(tunnel.status());
-});
+app.get('/api/tunnel/status', asyncH(async (_req, res) => {
+  res.json(await tunnel.status());
+}));
 app.post('/api/tunnel/start', asyncH(async (req, res) => {
   const { provider, token } = req.body || {};
   if (!token || String(token).length < 8) {
@@ -1048,20 +1048,20 @@ app.post('/api/tunnel/start', asyncH(async (req, res) => {
     const result = await tunnel.start({ provider, port: currentPort });
     res.json(result);
   } catch (e) {
-    res.status(400).json({ error: e.message, providers: tunnel.probe() });
+    res.status(400).json({ error: e.message, providers: await tunnel.probe().catch(() => ({})) });
   }
 }));
-app.post('/api/tunnel/stop', (_req, res) => {
+app.post('/api/tunnel/stop', asyncH(async (_req, res) => {
   const stopped = tunnel.stop();
-  res.json({ stopped, ...tunnel.status() });
-});
-app.post('/api/tunnel/token', (req, res) => {
+  res.json({ stopped, ...(await tunnel.status()) });
+}));
+app.post('/api/tunnel/token', asyncH(async (req, res) => {
   // Bare token update without touching the running tunnel.
   // POST { token: '' } to clear and disable remote auth.
   const t = (req.body && req.body.token) || '';
   tunnel.setToken(t);
-  res.json(tunnel.status());
-});
+  res.json(await tunnel.status());
+}));
 app.post('/api/tunnel/install', asyncH(async (req, res) => {
   const { provider } = req.body || {};
   try {

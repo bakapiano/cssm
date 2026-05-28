@@ -124,6 +124,12 @@ export function RemotePage() {
   const [token, setTokenLocal] = useState('');
   const [busy, setBusy] = useState(false);
   const [deviceList, setDeviceList] = useState([]);
+  // First /api/tunnel/status round-trip is the slow one — even with
+  // 30s server-side cache + parallel probe, a cold call shells out to
+  // where.exe / --version / `devtunnel user show` and adds ~700ms.
+  // We hide the form behind a spinner during that window so the user
+  // doesn't see empty radios + placeholders that suddenly fill in.
+  const [loading, setLoading] = useState(true);
   const pollRef = useRef(null);
 
   async function refresh() {
@@ -143,6 +149,7 @@ export function RemotePage() {
         return cur || 'cloudflared';
       });
     } catch (e) { setToast(`status load failed · ${e.message}`, 'error'); }
+    finally { setLoading(false); }
   }
 
   useEffect(() => {
@@ -244,6 +251,17 @@ export function RemotePage() {
   const log     = status?.log || [];
   const cf      = status?.providers?.cloudflared;
   const dt      = status?.providers?.devtunnel;
+
+  if (loading) {
+    return html`
+      <${PageTitleBar} title="Remote" />
+      <div class="settings-scroll">
+        <div class="remote-loading">
+          <div class="remote-loading-spinner" aria-hidden="true"></div>
+          <p>Probing tunnel providers…</p>
+        </div>
+      </div>`;
+  }
 
   return html`
     <${PageTitleBar} title="Remote" />

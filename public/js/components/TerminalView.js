@@ -3,7 +3,7 @@
 // output frames into xterm. Disposes everything on unmount or id change.
 
 import { html } from '../html.js';
-import { useEffect, useRef } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
@@ -36,6 +36,13 @@ export function TerminalView({ terminalId }) {
   const hostRef = useRef(null);
   const termRef = useRef(null);
   const wsRef = useRef(null);
+  // Set when ws.onclose receives our custom "displaced by another
+  // client" code (4001) from lib/webTerminal.js's latest-wins policy.
+  // Renders a full-pane prompt with a "Take it back" button that bumps
+  // reattachNonce → useEffect re-runs → new WS, displacing whoever
+  // currently holds the session.
+  const [displaced, setDisplaced] = useState(false);
+  const [reattachNonce, setReattach] = useState(0);
 
   useEffect(() => {
     if (!terminalId || !hostRef.current) return;
@@ -148,8 +155,19 @@ export function TerminalView({ terminalId }) {
         term.write(`\r\n\x1b[2m[process exited · code ${frame.code}]\x1b[0m\r\n`);
       }
     };
-    ws.onclose = () => {
-      term.write('\r\n\x1b[2m[disconnected]\x1b[0m\r\n');
+    ws.onclose = (ev) => {
+      // Server uses code 4001 + reason "displaced by another client"
+      // when a fresh attach takes over the session (latest-wins policy
+      // in lib/webTerminal.js's attach). We replace the terminal with
+      // a full-pane prompt + Take it back button via setDisplaced(true).
+      // Generic disconnects (network blip, server restart, PTY exit)
+      // get the dim inline notice as before — those usually self-heal
+      // and aren't worth a modal.
+      if (ev && ev.code === 4001) {
+        setDisplaced(true);
+      } else {
+        term.write('\r\n\x1b[2m[disconnected]\x1b[0m\r\n');
+      }
     };
 
     const onData = (data) => {
@@ -328,10 +346,50 @@ export function TerminalView({ terminalId }) {
       termRef.current = null;
       wsRef.current = null;
     };
-  }, [terminalId]);
+  }, [terminalId, reattachNonce]);
 
   if (!terminalId) {
     return html`<div class="terminal-empty">Select a terminal on the left, or launch a new one.</div>`;
   }
-  return html`<div ref=${hostRef} class="terminal-host"></div>`;
+  if (displaced) {
+    // Distinct key (and a non-div tag) forces Preact's reconciler to
+    // UNMOUNT the host <div> and mount a fresh element. Without this,
+    // Preact reuses the same DOM node, only flipping its className —
+    // and the xterm canvases stay parented inside, visible behind our
+    // overlay text. Re-mount on reattach: bumping reattachNonce reruns
+    // the effect with a fresh Terminal + WebSocket pair, which the
+    // server's latest-wins gate handles by displacing the current
+    // holder.
+    return html`
+      <section key="displaced" class="terminal-displaced">
+        <div class="terminal-displaced-card">
+          <h2>Another device picked up this session</h2>
+          <p>
+            Only one client at a time can attach. Your terminal here was
+            closed when another browser opened this session — its keystrokes
+            and resize events would otherwise fight yours.
+          </p>
+          <div class="terminal-displaced-actions">
+            <button class="action primary"
+                    onClick=${() => {
+                      // Clear displaced FIRST so the next render swaps the
+                      // overlay out for the host div — that's the only
+                      // way hostRef.current populates. Then bump the nonce
+                      // so the effect re-runs with the freshly-mounted
+                      // host and opens a new WS. Doing both in one tick
+                      // batches the state updates; React renders, mounts
+                      // the host, then flushes effects.
+                      setDisplaced(false);
+                      setReattach((n) => n + 1);
+                    }}>
+              Take it back
+            </button>
+          </div>
+          <p class="terminal-displaced-hint">
+            Taking it back will close the other client the same way.
+          </p>
+        </div>
+      </section>`;
+  }
+  return html`<div key="host" ref=${hostRef} class="terminal-host"></div>`;
 }
