@@ -157,9 +157,14 @@ body.is-wco .sidebar-top {
      min-floor on the JS path: the OS knows its own caption height best,
      and over-padding (the previous max(40px, …)) made the chrome look
      visibly chunkier than the rest of the window. */
-  height: calc(var(--titlebar-h, env(titlebar-area-height, 32px)) * var(--anti-zoom, 1));
-  min-height: calc(var(--titlebar-h, env(titlebar-area-height, 32px)) * var(--anti-zoom, 1));
-  max-height: calc(var(--titlebar-h, env(titlebar-area-height, 32px)) * var(--anti-zoom, 1));
+  /* `max(36px, …)` floors the anti-zoom shrink — at heavy page zoom the
+     counter-scale would otherwise collapse the WCO strip past the OS
+     control row height, jamming the brand mark / collapse toggle into
+     the title text. 36px matches the standalone page-title-bar floor
+     in layout.css so both modes degrade to the same minimum. */
+  height: max(36px, calc(var(--titlebar-h, env(titlebar-area-height, 32px)) * var(--anti-zoom, 1)));
+  min-height: max(36px, calc(var(--titlebar-h, env(titlebar-area-height, 32px)) * var(--anti-zoom, 1)));
+  max-height: max(36px, calc(var(--titlebar-h, env(titlebar-area-height, 32px)) * var(--anti-zoom, 1)));
 }
 body.is-wco .sidebar-brand,
 body.is-wco .sidebar-brand-button,

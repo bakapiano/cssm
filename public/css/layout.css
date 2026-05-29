@@ -115,9 +115,12 @@ body.is-resizing-sidebar .app {
   align-items: center;
   justify-content: space-between;
   gap: var(--s-3);
-  height: calc(40px * var(--anti-zoom, 1));
-  min-height: calc(40px * var(--anti-zoom, 1));
-  max-height: calc(40px * var(--anti-zoom, 1));
+  /* `max(36px, …)` floors the anti-zoom shrink — at heavy page zoom the
+     counter-scale would otherwise collapse the strip past readable
+     (e.g. 250% zoom → ~16px, title text overlaps the action row). */
+  height: max(36px, calc(40px * var(--anti-zoom, 1)));
+  min-height: max(36px, calc(40px * var(--anti-zoom, 1)));
+  max-height: max(36px, calc(40px * var(--anti-zoom, 1)));
   flex-shrink: 0;
   box-sizing: border-box;
   margin: 0 calc(-1 * var(--s-4)) 0;
