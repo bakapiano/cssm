@@ -494,3 +494,93 @@
   font-size: 11.5px !important;
   color: rgba(232, 227, 213, 0.45) !important;
 }
+
+/* ─── Mobile terminal accessory bar (TerminalKeyBar.js) ───────────────
+   Floats just above the soft keyboard via a JS-set `bottom` offset
+   (visualViewport keyboard height). Styled against the dark terminal
+   palette — it visually belongs to the terminal, not the cream chrome —
+   so it reads as one surface with the xterm canvas above it. */
+.term-keybar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  z-index: 215;                 /* above the mobile FAB (210) */
+  background: #201d19;
+  border-top: 1px solid rgba(232, 227, 213, 0.12);
+  padding: 6px 8px;
+  touch-action: manipulation;   /* kill the 300ms double-tap-zoom delay */
+  user-select: none;
+  -webkit-user-select: none;
+  /* NOT overflow:auto here — that would clip the Ctrl popover (which sits
+     at bottom:100%, above the bar). The horizontal scroll lives on the
+     inner .term-keybar-row instead. */
+}
+/* Inner scroll row — holds the keys; scrolls horizontally if they don't
+   fit, without clipping the popover that escapes the bar upward. */
+.term-keybar-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  white-space: nowrap;
+}
+.term-keybar-row::-webkit-scrollbar { display: none; }
+
+.tkb-key {
+  flex: 0 0 auto;
+  min-width: 42px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1;
+  color: #e8e3d5;
+  background: rgba(232, 227, 213, 0.06);
+  border: 1px solid rgba(232, 227, 213, 0.14);
+  border-radius: 8px;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.tkb-key:active,
+.tkb-key.is-active {
+  background: rgba(232, 227, 213, 0.20);
+  border-color: rgba(232, 227, 213, 0.32);
+}
+.tkb-arrow { padding: 0 10px; }
+.tkb-arrow svg { width: 18px; height: 18px; }
+/* S-Tab carries a multi-char label — let it size to content. */
+.tkb-wide { padding: 0 12px; }
+/* The ↵ glyph renders a touch small in the mono stack; bump it so it
+   matches the arrow icons' optical weight. */
+.tkb-glyph { font-size: 17px; line-height: 1; }
+
+/* Ctrl combos — a wrap grid that pops ABOVE the bar (bottom:100%). */
+.term-keybar-pop {
+  position: absolute;
+  bottom: 100%;
+  left: 8px;
+  right: 8px;
+  z-index: 1;                   /* above the key row inside the bar's context */
+  margin-bottom: 6px;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  padding: 8px;
+  background: #201d19;
+  border: 1px solid rgba(232, 227, 213, 0.16);
+  border-radius: 10px;
+  box-shadow: 0 -8px 24px -8px rgba(0, 0, 0, 0.5);
+}
+.tkb-combo {
+  flex-direction: column;
+  height: auto;
+  min-width: 0;
+  padding: 7px 4px;
+  gap: 2px;
+}
+.tkb-combo-label { font-family: var(--mono); font-size: 13px; color: #e8e3d5; }
+.tkb-combo-hint  { font-size: 9.5px; color: rgba(232, 227, 213, 0.5); letter-spacing: 0.01em; }

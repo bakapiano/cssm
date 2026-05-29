@@ -3,6 +3,7 @@
 // output frames into xterm. Disposes everything on unmount or id change.
 
 import { html } from '../html.js';
+import { Fragment } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -10,6 +11,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { wsBase, getToken, getDeviceId } from '../backend.js';
+import { TerminalKeyBar } from './TerminalKeyBar.js';
 
 // Dark xterm theme. We give the terminal a near-black ink background to
 // match what claude code's TUI assumes (it paints its own input box +
@@ -43,6 +45,13 @@ export function TerminalView({ terminalId, cliType }) {
   // currently holds the session.
   const [displaced, setDisplaced] = useState(false);
   const [reattachNonce, setReattach] = useState(0);
+
+  // Raw escape-sequence injector for the mobile key bar. Reads wsRef at
+  // call time so it stays valid across reattaches without re-binding.
+  const sendInput = (data) => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'input', data }));
+  };
 
   useEffect(() => {
     if (!terminalId || !hostRef.current) return;
@@ -418,5 +427,9 @@ export function TerminalView({ terminalId, cliType }) {
         </div>
       </section>`;
   }
-  return html`<div key="host" ref=${hostRef} class="terminal-host"></div>`;
+  return html`
+    <${Fragment}>
+      <div key="host" ref=${hostRef} class="terminal-host"></div>
+      <${TerminalKeyBar} send=${sendInput} cliType=${cliType} />
+    </${Fragment}>`;
 }
