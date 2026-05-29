@@ -25,6 +25,22 @@ import { PageTitleBar } from '../components/PageTitleBar.js';
 import { EntityFormModal } from '../components/EntityFormModal.js';
 import { useDragSort } from '../components/useDragSort.js';
 import { IconPlus, IconPencil, IconClose, IconTerminal, IconFolder, IconBranch, IconRefresh, IconChevronUp, IconChevronDown, IconForCliType, IconClaudeColor, IconCodexColor, IconCopilotColor } from '../icons.js';
+import { parseArgs, formatArgs } from '../util.js';
+
+// Tokenize the three free-form args fields into string[] before they hit
+// the backend. Form values arrive as strings (text inputs) — backend
+// stores arrays. parseArgs handles shell-style quoting so users can type
+// `-Model "claude-opus-4-8"` or `-Path 'C:\some dir\bin'` and get sane
+// argv splitting instead of a literal-quote token.
+function tokenizeCliArgs(v) {
+  const tok = (x) => typeof x === 'string' ? parseArgs(x) : x;
+  return {
+    ...v,
+    args:             tok(v.args),
+    resumeIdArgs:     tok(v.resumeIdArgs),
+    newSessionIdArgs: tok(v.newSessionIdArgs),
+  };
+}
 
 // Type → smart defaults. Choosing a type in the form auto-fills resumeArgs
 // (and command if blank) so users don't need to remember the per-CLI flag.
@@ -72,8 +88,8 @@ function cliFieldsFor({ creating } = {}) {
     },
     { key: 'name', label: 'Name', placeholder: 'My CLI', required: true },
     { key: 'command', label: 'Command', mono: true, placeholder: 'ccp / claude / ...', required: true },
-    { key: 'args', label: 'Args (space-separated)', mono: true, placeholder: '',
-      hint: 'Used on every launch.' },
+    { key: 'args', label: 'Args', mono: true, placeholder: '',
+      hint: 'Used on every launch. Shell-style quoting: -Model "claude-opus-4-8" or -Path \'C:\\some dir\\bin\'.' },
     { key: 'newSessionIdArgs', label: 'New session id args', mono: true, placeholder: '--session-id <id>',
       // Lock for known types — those args are an integration contract
       // with the upstream CLI, not a user knob. Only Type=Other allows
@@ -194,7 +210,7 @@ export function ConfigurePage() {
             id: c.id,
             icon: html`<${Icon} />`,
             primary: c.name,
-            secondary: html`<span class="mono">${c.command}${c.args?.length ? ' ' + c.args.join(' ') : ''}</span>${c.shell && c.shell !== 'direct' ? html` · ${c.shell}` : null}`,
+            secondary: html`<span class="mono">${c.command}${c.args?.length ? ' ' + formatArgs(c.args) : ''}</span>${c.shell && c.shell !== 'direct' ? html` · ${c.shell}` : null}`,
             badges: tags,
             undeletable: c.builtin,
             raw: c,
@@ -291,7 +307,7 @@ export function ConfigurePage() {
         onClose=${close} submitLabel="Create"
         onTest=${(v) => testCli({ command: v.command, shell: v.shell, type: v.type })}
         onSubmit=${async (v) => {
-          try { await createCli(v); setToast(`created CLI · ${v.name}`); }
+          try { await createCli(tokenizeCliArgs(v)); setToast(`created CLI · ${v.name}`); }
           catch (e) { setToast(e.message, 'error'); throw e; }
         }} />` : null}
 
@@ -300,21 +316,15 @@ export function ConfigurePage() {
         readOnlyKeys=${edit.payload.builtin ? ['type'] : []}
         initial=${{
           ...edit.payload,
-          args: (edit.payload.args || []).join(' '),
-          resumeIdArgs: (edit.payload.resumeIdArgs || []).join(' '),
-          newSessionIdArgs: (edit.payload.newSessionIdArgs || []).join(' '),
+          args: formatArgs(edit.payload.args),
+          resumeIdArgs: formatArgs(edit.payload.resumeIdArgs),
+          newSessionIdArgs: formatArgs(edit.payload.newSessionIdArgs),
         }}
         onClose=${close}
         onTest=${(v) => testCli({ command: v.command, shell: v.shell, type: v.type })}
         onSubmit=${async (v) => {
           try {
-            const patch = {
-              ...v,
-              args: typeof v.args === 'string' ? v.args.split(/\s+/).filter(Boolean) : v.args,
-              resumeIdArgs: typeof v.resumeIdArgs === 'string' ? v.resumeIdArgs.split(/\s+/).filter(Boolean) : v.resumeIdArgs,
-              newSessionIdArgs: typeof v.newSessionIdArgs === 'string' ? v.newSessionIdArgs.split(/\s+/).filter(Boolean) : v.newSessionIdArgs,
-            };
-            await updateCli(edit.payload.id, patch);
+            await updateCli(edit.payload.id, tokenizeCliArgs(v));
             setToast('saved');
           } catch (e) { setToast(e.message, 'error'); throw e; }
         }} />` : null}
